@@ -91,7 +91,7 @@ void VelmaLowLevelSafety::updateHook() {
         cmd_out_.rArm.cmd.data = 0;
         cmd_out_.lArm.cmd.data = 0;
 
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < 4; ++i) {
             cmd_out_.rHand.q[i] = 0;
             cmd_out_.rHand.dq[i] = 0;
             cmd_out_.rHand.max_p[i] = 0;

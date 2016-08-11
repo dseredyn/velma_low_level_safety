@@ -39,9 +39,23 @@ VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
 {
     this->ports()->addPort("command_INPORT", port_command_in_);
     this->ports()->addPort("status_INPORT", port_status_in_);
+
+    const int number_of_joints = 7;
+    joint_error_.resize(number_of_joints);
+    arm_k_.resize(number_of_joints);
+    arm_k_(0) = arm_k_(1) = arm_k_(2) = arm_k_(3) = arm_k_(4) = arm_k_(5) = arm_k_(6) = 20;
+
+    k_.resize(number_of_joints);
+    q_.resize(number_of_joints, number_of_joints);
+    d_.resizeLike(q_);
+    k0_.resizeLike(q_);
+    tmpNN_.resizeLike(q_);
+    es_ = Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd >(number_of_joints);
 }
 
 bool VelmaLowLevelSafety::configureHook() {
+    Logger::In in("VelmaLowLevelSafety::configureHook");
+
     return true;
 }
 
@@ -56,12 +70,47 @@ bool VelmaLowLevelSafety::startHook() {
 void VelmaLowLevelSafety::stopHook() {
 }
 
+bool VelmaLowLevelSafety::calculateJntImpTorque(const Eigen::VectorXd &joint_position_command,
+    const Eigen::VectorXd &joint_position, const Eigen::VectorXd &joint_velocity,
+    const Eigen::VectorXd &k, const Eigen::Matrix77d &m,
+    Eigen::VectorXd &joint_torque_command)
+{
+    Logger::In in("VelmaLowLevelSafety::calculateJntImpTorque");
+
+    joint_error_.noalias() = joint_position_command - joint_position;
+    joint_torque_command.noalias() = k.cwiseProduct(joint_error_);
+
+    if (!joint_torque_command.allFinite()) {
+        Logger::log() << Logger::Error << "Non finite output from stiffness" << std::endl;
+        return false;
+    }
+
+    tmpNN_ = k.asDiagonal();
+    es_.compute(tmpNN_, m);
+    q_ = es_.eigenvectors().inverse();
+    k0_ = es_.eigenvalues();
+
+    tmpNN_ = k0_.cwiseAbs().cwiseSqrt().asDiagonal();
+
+    d_.noalias() = 2.0 * q_.transpose() * 0.7 * tmpNN_ * q_;
+    joint_torque_command.noalias() -= d_ * joint_velocity;
+    if (!joint_torque_command.allFinite()) {
+        Logger::log() << Logger::Error << "Non finite output from damping: s_q: " << joint_position_command.transpose() <<
+            " q: " << joint_position.transpose() << " dq: " << joint_velocity.transpose() <<
+            " k: " << k.transpose() << " m: " << m << std::endl;
+        return false;
+    }
+    return true;
+}
+
 void VelmaLowLevelSafety::updateHook() {
     Logger::In in("VelmaLowLevelSafety::updateHook");
 //    RESTRICT_ALLOC;
 
+    bool status_valid = false;
     if (port_status_in_.read(status_in_) == NewData) {
         // verify robot status here
+        status_valid = true;
     }
 
     uint32_t comm_status_in = 0;
@@ -76,6 +125,7 @@ void VelmaLowLevelSafety::updateHook() {
         }
     }
     else {
+        // emergency procedure
         cmd_out_.rHand_tactileCmd = 0;
         cmd_out_.tMotor_i = 0;
         cmd_out_.hpMotor_i = 0;
@@ -104,14 +154,43 @@ void VelmaLowLevelSafety::updateHook() {
         cmd_out_.rHand.hold = false;
         cmd_out_.lHand.hold = false;
 
-        out_.writePorts(cmd_out_);
         if (!emergency_) {
             emergency_ = true;
+            rArm_safe_q_.convertFromROS(status_in_.rArm.q);
+            lArm_safe_q_.convertFromROS(status_in_.lArm.q);
             Logger::log() << Logger::Info << "sending emergency data..." << Logger::endl;
         }
         else {
             Logger::log() << Logger::Debug << "sending emergency data" << Logger::endl;
         }
+
+        if (status_valid) {
+            // right arm
+            arm_q_.convertFromROS(status_in_.rArm.q);
+            arm_dq_.convertFromROS(status_in_.rArm.dq);
+
+            arm_mass77_.convertFromROS(status_in_.rArm.mmx);
+
+            if ( calculateJntImpTorque(rArm_safe_q_.data_, arm_q_.data_, arm_dq_.data_,
+                arm_k_, arm_mass77_.data_, arm_t_cmd_.data_) )
+            {
+                arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
+            }
+
+            // left arm
+            arm_q_.convertFromROS(status_in_.lArm.q);
+            arm_dq_.convertFromROS(status_in_.lArm.dq);
+
+            arm_mass77_.convertFromROS(status_in_.lArm.mmx);
+
+            if ( calculateJntImpTorque(lArm_safe_q_.data_, arm_q_.data_, arm_dq_.data_,
+                arm_k_, arm_mass77_.data_, arm_t_cmd_.data_) )
+            {
+                arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
+            }
+        }
+
+        out_.writePorts(cmd_out_);
     }
 }
 

@@ -45,6 +45,8 @@
 
 #include "velma_low_level_interface/velma_lli_command_ports.h"
 
+using namespace velma_low_level_interface_msgs;
+
 class VelmaLowLevelSafety: public RTT::TaskContext {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -61,16 +63,37 @@ public:
 
 private:
 
-    velma_low_level_interface_msgs::VelmaLowLevelCommand cmd_out_;
-    velma_low_level_interface_msgs::VelmaLowLevelCommand cmd_in_;
-    velma_low_level_interface_msgs::VelmaLowLevelStatus status_in_;
+    bool calculateJntImpTorque(const Eigen::VectorXd &joint_position_command,
+        const Eigen::VectorXd &joint_position, const Eigen::VectorXd &joint_velocity,
+        const Eigen::VectorXd &k, const Eigen::Matrix77d &m,
+        Eigen::VectorXd &joint_torque_command);
+
+    VelmaLowLevelCommand cmd_out_;
+    VelmaLowLevelCommand cmd_in_;
+    VelmaLowLevelStatus status_in_;
 
     VelmaLLICommandOutput out_;
 
-    RTT::InputPort<velma_low_level_interface_msgs::VelmaLowLevelCommand> port_command_in_;
-    RTT::InputPort<velma_low_level_interface_msgs::VelmaLowLevelStatus> port_status_in_;
+    RTT::InputPort<VelmaLowLevelCommand> port_command_in_;
+    RTT::InputPort<VelmaLowLevelStatus> port_status_in_;
+
+    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > rArm_safe_q_;
+    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > lArm_safe_q_;
+    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_q_;
+    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_dq_;
+    velma_lli_types::PortRawData<Eigen::Matrix77d, boost::array<double, 28ul> > arm_mass77_;
+    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_t_cmd_;
 
     bool emergency_;
+
+
+    Eigen::VectorXd joint_error_;
+
+    Eigen::VectorXd arm_k_;
+    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd > es_;
+    Eigen::VectorXd k_;
+    Eigen::MatrixXd m_, d_, k0_, q_, qt_;
+    Eigen::MatrixXd tmpNN_;
 
 };
 

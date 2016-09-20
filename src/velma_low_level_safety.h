@@ -68,6 +68,11 @@ private:
         const Eigen::VectorXd &k, const Eigen::Matrix77d &m,
         Eigen::VectorXd &joint_torque_command);
 
+    void calculateArmDampingTorque(const Eigen::VectorXd &joint_velocity,
+        Eigen::VectorXd &joint_torque_command);
+
+    bool is_command_valid(const VelmaLowLevelCommand &cmd);
+
     VelmaLowLevelCommand cmd_out_;
     VelmaLowLevelCommand cmd_in_;
     VelmaLowLevelStatus status_in_;
@@ -95,6 +100,11 @@ private:
     Eigen::MatrixXd m_, d_, k0_, q_, qt_;
     Eigen::MatrixXd tmpNN_;
 
+    int no_hw_error_counter_;
+    bool enable_command_mode_switch_;
+
+    int lArm_fri_state_;
+    int rArm_fri_state_;
 };
 
 #endif  // VELMA_LOW_LEVEL_SAFETY_H_

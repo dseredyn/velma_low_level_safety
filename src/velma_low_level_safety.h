@@ -44,6 +44,7 @@
 #include "eigen_conversions/eigen_msg.h"
 
 #include "velma_low_level_interface/velma_lli_command_ports.h"
+#include "velma_low_level_interface/velma_lli_status_ports.h"
 
 using namespace velma_low_level_interface_msgs;
 
@@ -73,28 +74,42 @@ private:
 
     void calculateTorsoDampingTorque(double motor_velocity, double &motor_current_command);
 
-    bool is_command_valid(const VelmaLowLevelCommand &cmd);
+    bool isCommandValid(const VelmaLowLevelCommand &cmd);
+    bool isStatusValid(const VelmaLowLevelStatus &st);
+    bool isLwrOk(const tFriIntfState &fri_state, const tFriRobotState &robot_state) const;
 
-//    enum states {HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
+    enum SafetyControllerState {HW_DOWN, HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
+    static const std::string state_names_[5];
+    const std::string& getStateName(SafetyControllerState state) const;
+
+    SafetyControllerState state_;
+    int counts_HW_DISABLED_;
+
 /*
-    states: {HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
+    states: {HW_DOWN, HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
 
     possible state changes:
+    HW_DOWN -> HW_DISABLED
     HW_DISABLED -> HW_ENABLED       (can be changed explicitily)
     HW_ENABLED -> CONTROL_ENABLED   (can be changed explicitily)
     CONTROL_ENABLED -> HW_ENABLED
     CONTROL_ENABLED -> HW_DISABLED
+    CONTROL_ENABLED -> HW_DOWN
     HW_ENABLED -> HW_DISABLED
+    HW_ENABLED -> HW_DOWN
+    HW_DISABLED -> HW_DOWN
 
     initial conditions for:
 
     HW_ENABLED (enable all HW devices):
+    - the state id HW_DISABLED
     - there is communication with all HW devices
     - all status data is valid
     - a proper safety controller command is sent (ENABLE_HW)
 
 
     CONTROL_ENABLED (turn off the safety controller):
+    - the state is HW_ENABLED
     - there is communication with all HW devices
     - all HW devices are enabled
     - all status data is valid
@@ -108,12 +123,28 @@ private:
 
     VelmaLowLevelCommand cmd_out_;
     VelmaLowLevelCommand cmd_in_;
-    VelmaLowLevelStatus status_in_;
+//    VelmaLowLevelStatus status_in_;
 
     VelmaLLICommandOutput out_;
 
     RTT::InputPort<VelmaLowLevelCommand> port_command_in_;
-    RTT::InputPort<VelmaLowLevelStatus> port_status_in_;
+//    RTT::InputPort<VelmaLowLevelStatus> port_status_in_;
+    RTT::OutputPort<VelmaLowLevelStatus> port_status_out_;
+
+    // additional HW control ports
+    RTT::InputPort<tFriIntfState>       port_rArm_fri_state_in_;
+    RTT::InputPort<tFriRobotState>      port_rArm_robot_state_in_;
+    RTT::InputPort<tFriIntfState>       port_lArm_fri_state_in_;
+    RTT::InputPort<tFriRobotState>      port_lArm_robot_state_in_;
+    RTT::OutputPort<std_msgs::Int32 >   port_rArm_KRL_CMD_out_;             // FRIx.KRL_CMD
+    RTT::OutputPort<std_msgs::Int32 >   port_lArm_KRL_CMD_out_;             // FRIx.KRL_CMD
+
+    tFriIntfState       rArm_fri_state_;
+    tFriRobotState      rArm_robot_state_;
+    tFriIntfState       lArm_fri_state_;
+    tFriRobotState      lArm_robot_state_;
+    std_msgs::Int32     rArm_KRL_CMD_;             // FRIx.KRL_CMD
+    std_msgs::Int32     lArm_KRL_CMD_;             // FRIx.KRL_CMD
 
 //    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > rArm_safe_q_;
 //    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > lArm_safe_q_;
@@ -135,10 +166,13 @@ private:
     int no_hw_error_counter_;
     bool enable_command_mode_switch_;
 
-    int lArm_fri_state_;
-    int rArm_fri_state_;
+//    int lArm_fri_state_;
+//    int rArm_fri_state_;
 
     const int arm_joints_count_;
+
+    velma_low_level_interface_msgs::VelmaLowLevelStatus status_;
+    VelmaLLIStatusInput status_in_;
 };
 
 #endif  // VELMA_LOW_LEVEL_SAFETY_H_

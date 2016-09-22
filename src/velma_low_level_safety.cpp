@@ -35,26 +35,67 @@ using namespace RTT;
 
 VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
     TaskContext(name, PreOperational),
-    out_(*this)
+    out_(*this),
+    torso_damping_factor_(-1),  // initialize with invalid value, should be later set to >= 0
+    arm_joints_count_(7)
 {
     this->ports()->addPort("command_INPORT", port_command_in_);
     this->ports()->addPort("status_INPORT", port_status_in_);
 
-    const int number_of_joints = 7;
-    joint_error_.resize(number_of_joints);
-    arm_k_.resize(number_of_joints);
+    addProperty("l_arm_damping_factors", l_arm_damping_factors_);
+    addProperty("r_arm_damping_factors", r_arm_damping_factors_);
+    addProperty("torso_damping_factor", torso_damping_factor_);
+
+    joint_error_.resize(arm_joints_count_);
+    arm_k_.resize(arm_joints_count_);
     arm_k_(0) = arm_k_(1) = arm_k_(2) = arm_k_(3) = arm_k_(4) = arm_k_(5) = arm_k_(6) = 20;
 
-    k_.resize(number_of_joints);
-    q_.resize(number_of_joints, number_of_joints);
+    k_.resize(arm_joints_count_);
+    q_.resize(arm_joints_count_, arm_joints_count_);
     d_.resizeLike(q_);
     k0_.resizeLike(q_);
     tmpNN_.resizeLike(q_);
-    es_ = Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd >(number_of_joints);
+    es_ = Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd >(arm_joints_count_);
 }
 
 bool VelmaLowLevelSafety::configureHook() {
     Logger::In in("VelmaLowLevelSafety::configureHook");
+
+    if (l_arm_damping_factors_.size() != arm_joints_count_) {
+        Logger::log() << Logger::Error <<
+            "parameter l_arm_damping_factors is set to illegal value (wrong vector size: " <<
+            l_arm_damping_factors_.size() << ")" << Logger::endl;
+        return false;
+    }
+
+    if (r_arm_damping_factors_.size() != arm_joints_count_) {
+        Logger::log() << Logger::Error <<
+            "parameter r_arm_damping_factors is set to illegal value (wrong vector size: " <<
+            r_arm_damping_factors_.size() << ")" << Logger::endl;
+        return false;
+    }
+
+    for (int i = 0; i < arm_joints_count_; ++i) {
+        if (l_arm_damping_factors_[i] < 0) {
+            Logger::log() << Logger::Error <<
+                "parameter l_arm_damping_factors[" << i << "] is set to illegal value: " <<
+                l_arm_damping_factors_[i] << Logger::endl;
+            return false;
+        }
+        if (r_arm_damping_factors_[i] < 0) {
+            Logger::log() << Logger::Error <<
+                "parameter r_arm_damping_factors[" << i << "] is set to illegal value: " <<
+                r_arm_damping_factors_[i] << Logger::endl;
+            return false;
+        }
+    }
+
+    if (torso_damping_factor_ < 0) {
+        Logger::log() << Logger::Error <<
+            "parameter torso_damping_factor is set to illegal value: " <<
+            torso_damping_factor_ << Logger::endl;
+        return false;
+    }
 
     return true;
 }
@@ -90,7 +131,7 @@ bool VelmaLowLevelSafety::calculateJntImpTorque(const Eigen::VectorXd &joint_pos
     joint_torque_command.noalias() = k.cwiseProduct(joint_error_);
 
     if (!joint_torque_command.allFinite()) {
-        Logger::log() << Logger::Error << "Non finite output from stiffness" << std::endl;
+        Logger::log() << Logger::Error << "Non finite output from stiffness" << Logger::endl;
         return false;
     }
 
@@ -104,29 +145,36 @@ bool VelmaLowLevelSafety::calculateJntImpTorque(const Eigen::VectorXd &joint_pos
     d_.noalias() = 2.0 * q_.transpose() * 0.7 * tmpNN_ * q_;
     joint_torque_command.noalias() -= d_ * joint_velocity;
     if (!joint_torque_command.allFinite()) {
-        Logger::log() << Logger::Error << "Non finite output from damping: s_q: " << joint_position_command.transpose() <<
+        Logger::log() << Logger::Error <<
+            "Non finite output from damping: s_q: " << joint_position_command.transpose() <<
             " q: " << joint_position.transpose() << " dq: " << joint_velocity.transpose() <<
-            " k: " << k.transpose() << " m: " << m << std::endl;
+            " k: " << k.transpose() << " m: " << m << Logger::endl;
         return false;
     }
     return true;
 }
 
 void VelmaLowLevelSafety::calculateArmDampingTorque(const Eigen::VectorXd &joint_velocity,
-    Eigen::VectorXd &joint_torque_command)
+    const std::vector<double> &damping_factors, Eigen::VectorXd &joint_torque_command)
 {
     Logger::In in("VelmaLowLevelSafety::calculateArmDampingTorque");
 
     joint_torque_command.setZero();
+    for (int i = 0; i < arm_joints_count_; ++i) {
+        joint_torque_command(i) = -damping_factors[i] * joint_velocity(i);
+    }
+}
 
-    // TODO: read those parameters from rosparam
-    joint_torque_command(0) = -10 * joint_velocity(0);
-    joint_torque_command(1) = -10 * joint_velocity(1);
-    joint_torque_command(2) = -5 * joint_velocity(2);
-    joint_torque_command(3) = -5 * joint_velocity(3);
-    joint_torque_command(4) = -2 * joint_velocity(4);
-    joint_torque_command(5) = -2 * joint_velocity(5);
-    joint_torque_command(6) = -1 * joint_velocity(6);
+void VelmaLowLevelSafety::calculateTorsoDampingTorque(double motor_velocity, double &motor_current_command)
+{
+    Logger::In in("VelmaLowLevelSafety::calculateTorsoDampingTorque");
+
+    const double torso_gear = 158.0;
+    const double torso_trans_mult = 20000.0 * torso_gear / (M_PI * 2.0);
+    const double torso_motor_constant = 0.00105;
+    double joint_velocity = motor_velocity / torso_trans_mult;
+    double motor_torque_command = -torso_damping_factor_ * joint_velocity;
+    motor_current_command = motor_torque_command / torso_gear / torso_motor_constant;
 }
 
 bool VelmaLowLevelSafety::is_command_valid(const VelmaLowLevelCommand &cmd) {
@@ -164,15 +212,15 @@ bool VelmaLowLevelSafety::is_command_valid(const VelmaLowLevelCommand &cmd) {
         return false;
     }
 
-    if (cmd.lArm.t.size() != 7) {
+    if (cmd.lArm.t.size() != arm_joints_count_) {
         return false;
     }
 
-    if (cmd.rArm.t.size() != 7) {
+    if (cmd.rArm.t.size() != arm_joints_count_) {
         return false;
     }
 
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < arm_joints_count_; ++i) {
         if (cmd.lArm.t[i] != cmd.lArm.t[i]) {
             return false;
         }
@@ -268,9 +316,11 @@ void VelmaLowLevelSafety::updateHook() {
     Logger::In in("VelmaLowLevelSafety::updateHook");
 //    RESTRICT_ALLOC;
 
+    Logger::log() << Logger::Debug << Logger::endl;
+
     no_hw_error_counter_++;
 
-    bool status_valid = false;
+    bool status_received = false;
     if (port_status_in_.read(status_in_) == NewData) {
 
 
@@ -352,8 +402,8 @@ void VelmaLowLevelSafety::updateHook() {
 
         if (lArmRobot->power != 0x7F || rArmRobot->power != 0x7F || lArmRobot->error != 0 || rArmRobot->error != 0 ||   // error
             lArmRobot->warning != 0 || rArmRobot->warning != 0 ||   // error?
-            lArmRobot->control != FRI_CTRL_JNT_IMP || rArmRobot->control != FRI_CTRL_JNT_IMP ||
-            lArmFri->quality <= FRI_QUALITY_UNACCEPTABLE || rArmFri->quality <= FRI_QUALITY_UNACCEPTABLE)
+            lArmRobot->control != FRI_CTRL_JNT_IMP || rArmRobot->control != FRI_CTRL_JNT_IMP ||     // error
+            lArmFri->quality <= FRI_QUALITY_UNACCEPTABLE || rArmFri->quality <= FRI_QUALITY_UNACCEPTABLE)   // error
         {
             // error
             no_hw_error_counter_ = 0;
@@ -365,35 +415,35 @@ void VelmaLowLevelSafety::updateHook() {
         // robot power
         if (lArmRobot->power != 0x7F) {
             // error
-            std::cout << "lArmRobot->power != 0x7F" << std::endl;
+            Logger::log() << Logger::Info << "lArmRobot->power != 0x7F" << Logger::endl;
         }
         else if (rArmRobot->power != 0x7F) {
             // error
-            std::cout << "rArmRobot->power != 0x7F" << std::endl;
+            Logger::log() << Logger::Info << "rArmRobot->power != 0x7F" << Logger::endl;
         }
         else if (lArmRobot->error != 0) {
             // error
-            std::cout << "lArmRobot->error != 0" << std::endl;
+            Logger::log() << Logger::Info << "lArmRobot->error != 0" << Logger::endl;
         }
         else if (rArmRobot->error != 0) {
             // error
-            std::cout << "rArmRobot->error != 0" << std::endl;
+            Logger::log() << Logger::Info << "rArmRobot->error != 0" << Logger::endl;
         }
         else if (lArmRobot->warning != 0) {
             // error?
-            std::cout << "lArmRobot->warning" << std::endl;
+            Logger::log() << Logger::Info << "lArmRobot->warning" << Logger::endl;
         }
         else if (rArmRobot->warning != 0) {
             // error?
-            std::cout << "rArmRobot->warning" << std::endl;
+            Logger::log() << Logger::Info << "rArmRobot->warning" << Logger::endl;
         }
         else if (lArmRobot->control != FRI_CTRL_JNT_IMP) {
             // error
-            std::cout << "lArmRobot->control != FRI_CTRL_JNT_IMP" << std::endl;
+            Logger::log() << Logger::Info << "lArmRobot->control != FRI_CTRL_JNT_IMP" << Logger::endl;
         }
         else if (rArmRobot->control != FRI_CTRL_JNT_IMP) {
             // error
-            std::cout << "rArmRobot->control != FRI_CTRL_JNT_IMP" << std::endl;
+            Logger::log() << Logger::Info << "rArmRobot->control != FRI_CTRL_JNT_IMP" << Logger::endl;
         }
         // FRI link quality
         else if (lArmFri->quality <= FRI_QUALITY_UNACCEPTABLE) {
@@ -423,11 +473,11 @@ void VelmaLowLevelSafety::updateHook() {
 */
 
         // TODO: verify robot status here
-        status_valid = true;
+        status_received = true;
     }
     else {
         // could not receive valid status data
-        std::cout << "could not receive valid status data" << std::endl;
+        Logger::log() << Logger::Warning << "could not receive valid status data" << Logger::endl;
         no_hw_error_counter_ = 0;
     }
 
@@ -444,7 +494,8 @@ void VelmaLowLevelSafety::updateHook() {
     }
     else {
         // emergency procedure
-        cmd_out_.rHand_tactileCmd = 0;
+        cmd_out_.rTact.tactileCmd = 0;
+        cmd_out_.rTact.valid = false;
         cmd_out_.tMotor_i = 0;
         cmd_out_.hpMotor_i = 0;
         cmd_out_.htMotor_i = 0;
@@ -452,7 +503,7 @@ void VelmaLowLevelSafety::updateHook() {
         cmd_out_.htMotor_q = 0;
         cmd_out_.hpMotor_dq = 0;
         cmd_out_.htMotor_dq = 0;
-        for (int i = 0; i < 7; ++i) {
+        for (int i = 0; i < arm_joints_count_; ++i) {
             cmd_out_.rArm.t[i] = 0.0;
             cmd_out_.lArm.t[i] = 0.0;
         }
@@ -472,8 +523,8 @@ void VelmaLowLevelSafety::updateHook() {
 
         if (!emergency_) {
             emergency_ = true;
-            rArm_safe_q_.convertFromROS(status_in_.rArm.q);
-            lArm_safe_q_.convertFromROS(status_in_.lArm.q);
+//            rArm_safe_q_.convertFromROS(status_in_.rArm.q);
+//            lArm_safe_q_.convertFromROS(status_in_.lArm.q);
             Logger::log() << Logger::Info << "sending emergency data..." << Logger::endl;
         }
         else {
@@ -498,7 +549,7 @@ void VelmaLowLevelSafety::updateHook() {
             cmd_out_.rArm.cmd_valid = false;
         }
 
-        if (status_valid) {
+        if (status_received) {
             // right arm
 //            arm_q_.convertFromROS(status_in_.rArm.q);
 //            arm_dq_.convertFromROS(status_in_.rArm.dq);
@@ -509,9 +560,11 @@ void VelmaLowLevelSafety::updateHook() {
 //                arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
 //            }
 
-            arm_dq_.convertFromROS(status_in_.rArm.dq);
-            calculateArmDampingTorque(arm_dq_.data_, arm_t_cmd_.data_);
-            arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
+            if (status_in_.rArm_valid) {
+                arm_dq_.convertFromROS(status_in_.rArm.dq);
+                calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
+                arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
+            }
 
             // left arm
 //            arm_q_.convertFromROS(status_in_.lArm.q);
@@ -523,9 +576,28 @@ void VelmaLowLevelSafety::updateHook() {
 //                arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
 //            }
 
-            arm_dq_.convertFromROS(status_in_.lArm.dq);
-            calculateArmDampingTorque(arm_dq_.data_, arm_t_cmd_.data_);
-            arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
+            if (status_in_.lArm_valid) {
+                arm_dq_.convertFromROS(status_in_.lArm.dq);
+                calculateArmDampingTorque(arm_dq_.data_, l_arm_damping_factors_, arm_t_cmd_.data_);
+                arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
+            }
+
+            if (status_in_.tMotor_valid) {
+                calculateTorsoDampingTorque(status_in_.tMotor_dq, cmd_out_.tMotor_i);
+            }
+
+            if (status_in_.hpMotor_valid) {
+                cmd_out_.hpMotor_i = 0;
+                cmd_out_.hpMotor_q = status_in_.hpMotor_q;
+                cmd_out_.hpMotor_dq = 0;
+            }
+
+            if (status_in_.htMotor_valid) {
+                cmd_out_.htMotor_i = 0;
+                cmd_out_.htMotor_q = status_in_.htMotor_q;
+                cmd_out_.htMotor_dq = 0;
+            }
+
         }
 
         out_.writePorts(cmd_out_);

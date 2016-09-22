@@ -69,9 +69,42 @@ private:
         Eigen::VectorXd &joint_torque_command);
 
     void calculateArmDampingTorque(const Eigen::VectorXd &joint_velocity,
-        Eigen::VectorXd &joint_torque_command);
+        const std::vector<double> &damping_factors, Eigen::VectorXd &joint_torque_command);
+
+    void calculateTorsoDampingTorque(double motor_velocity, double &motor_current_command);
 
     bool is_command_valid(const VelmaLowLevelCommand &cmd);
+
+//    enum states {HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
+/*
+    states: {HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
+
+    possible state changes:
+    HW_DISABLED -> HW_ENABLED       (can be changed explicitily)
+    HW_ENABLED -> CONTROL_ENABLED   (can be changed explicitily)
+    CONTROL_ENABLED -> HW_ENABLED
+    CONTROL_ENABLED -> HW_DISABLED
+    HW_ENABLED -> HW_DISABLED
+
+    initial conditions for:
+
+    HW_ENABLED (enable all HW devices):
+    - there is communication with all HW devices
+    - all status data is valid
+    - a proper safety controller command is sent (ENABLE_HW)
+
+
+    CONTROL_ENABLED (turn off the safety controller):
+    - there is communication with all HW devices
+    - all HW devices are enabled
+    - all status data is valid
+    - all control data is valid
+    - a proper safety controller command is sent (ENABLE_CONTROL)
+*/
+    // ROS parameters
+	std::vector<double> l_arm_damping_factors_;
+	std::vector<double> r_arm_damping_factors_;
+	double torso_damping_factor_;
 
     VelmaLowLevelCommand cmd_out_;
     VelmaLowLevelCommand cmd_in_;
@@ -82,15 +115,14 @@ private:
     RTT::InputPort<VelmaLowLevelCommand> port_command_in_;
     RTT::InputPort<VelmaLowLevelStatus> port_status_in_;
 
-    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > rArm_safe_q_;
-    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > lArm_safe_q_;
-    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_q_;
+//    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > rArm_safe_q_;
+//    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > lArm_safe_q_;
+//    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_q_;
     velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_dq_;
-    velma_lli_types::PortRawData<Eigen::Matrix77d, boost::array<double, 28ul> > arm_mass77_;
+//    velma_lli_types::PortRawData<Eigen::Matrix77d, boost::array<double, 28ul> > arm_mass77_;
     velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_t_cmd_;
 
     bool emergency_;
-
 
     Eigen::VectorXd joint_error_;
 
@@ -105,6 +137,8 @@ private:
 
     int lArm_fri_state_;
     int rArm_fri_state_;
+
+    const int arm_joints_count_;
 };
 
 #endif  // VELMA_LOW_LEVEL_SAFETY_H_

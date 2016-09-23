@@ -63,6 +63,7 @@ public:
     void updateHook();
 
 private:
+    const int arm_joints_count_;
 
     bool calculateJntImpTorque(const Eigen::VectorXd &joint_position_command,
         const Eigen::VectorXd &joint_position, const Eigen::VectorXd &joint_velocity,
@@ -74,13 +75,29 @@ private:
 
     void calculateTorsoDampingTorque(double motor_velocity, double &motor_current_command);
 
-    bool isCommandValid(const VelmaLowLevelCommand &cmd);
-    bool isStatusValid(const VelmaLowLevelStatus &st);
+    bool isCommandValidTorso(const VelmaLowLevelCommandMotor &cmd) const;
+    bool isCommandValidHeadPan(const VelmaLowLevelCommandMotor &cmd) const;
+    bool isCommandValidHeadTilt(const VelmaLowLevelCommandMotor &cmd) const;
+    bool isCommandValid(const VelmaLowLevelCommandArm &cmd) const;
+    bool isCommandValid(const VelmaLowLevelCommandHand &cmd) const;
+    bool isCommandValid(const VelmaLowLevelCommand &cmd) const;
+
+    bool isStatusValid(const VelmaLowLevelStatus &st) const;
+    bool isStatusValid(const VelmaLowLevelStatusArm &st) const;
+    bool isStatusValid(const VelmaLowLevelStatusHand &st) const;
+    bool isStatusValid(const VelmaLowLevelStatusMotor &st) const;
+    bool isStatusValid(const VelmaLowLevelStatusFT &st) const;
+
     bool isLwrOk(const tFriIntfState &fri_state, const tFriRobotState &robot_state) const;
+
+    bool isNaN(double d) const;
+    bool isInLim(double d, double lo_lim, double hi_lim) const;
 
     enum SafetyControllerState {HW_DOWN, HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
     static const std::string state_names_[5];
     const std::string& getStateName(SafetyControllerState state) const;
+
+    std::string cmdToStr(const VelmaLowLevelCommand &cmd);
 
     SafetyControllerState state_;
     int counts_HW_DISABLED_;
@@ -121,6 +138,12 @@ private:
 	std::vector<double> r_arm_damping_factors_;
 	double torso_damping_factor_;
 
+    std::vector<double> arm_q_limits_lo_;
+    std::vector<double> arm_q_limits_hi_;
+    std::vector<double> arm_dq_limits_;
+    std::vector<double> arm_t_limits_;
+
+    // port data
     VelmaLowLevelCommand cmd_out_;
     VelmaLowLevelCommand cmd_in_;
 //    VelmaLowLevelStatus status_in_;
@@ -166,10 +189,11 @@ private:
     int no_hw_error_counter_;
     bool enable_command_mode_switch_;
 
-//    int lArm_fri_state_;
-//    int rArm_fri_state_;
 
-    const int arm_joints_count_;
+    bool allHwOk_;
+    bool hwStatusValid_;
+    bool readCmdData_;
+    bool cmdValid_;
 
     velma_low_level_interface_msgs::VelmaLowLevelStatus status_;
     VelmaLLIStatusInput status_in_;

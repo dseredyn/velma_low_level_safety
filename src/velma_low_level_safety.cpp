@@ -25,12 +25,15 @@
  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <sstream>
+
 #include <rtt/Component.hpp>
 #include <rtt/Logger.hpp>
 #include <rtt/base/PortInterface.hpp>
 #include <kuka_lwr_fri/friComm.h>
 
 #include "velma_low_level_safety.h"
+#include <math.h>
 
 using namespace RTT;
 
@@ -54,11 +57,11 @@ const std::string& VelmaLowLevelSafety::getStateName(SafetyControllerState state
 
 VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
     TaskContext(name, PreOperational),
+    arm_joints_count_(7),
     state_(HW_DOWN),
     out_(*this),
     status_in_(*this),
-    torso_damping_factor_(-1),  // initialize with invalid value, should be later set to >= 0
-    arm_joints_count_(7)
+    torso_damping_factor_(-1)  // initialize with invalid value, should be later set to >= 0
 {
     this->ports()->addPort("command_INPORT", port_command_in_);
     this->ports()->addPort("status_OUTPORT", port_status_out_);
@@ -76,6 +79,11 @@ VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
     addProperty("r_arm_damping_factors", r_arm_damping_factors_);
     addProperty("torso_damping_factor", torso_damping_factor_);
 
+    addProperty("arm_q_limits_lo", arm_q_limits_lo_);
+    addProperty("arm_q_limits_hi", arm_q_limits_hi_);
+    addProperty("arm_dq_limits", arm_dq_limits_);
+    addProperty("arm_t_limits", arm_t_limits_);
+
     joint_error_.resize(arm_joints_count_);
     arm_k_.resize(arm_joints_count_);
     arm_k_(0) = arm_k_(1) = arm_k_(2) = arm_k_(3) = arm_k_(4) = arm_k_(5) = arm_k_(6) = 20;
@@ -90,6 +98,13 @@ VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
 
 bool VelmaLowLevelSafety::configureHook() {
     Logger::In in("VelmaLowLevelSafety::configureHook");
+
+    double x_nan = NAN;
+
+    if (!isNaN(x_nan)) {
+        Logger::log() << Logger::Error << "NaN testing is not supported (NaN == NaN)" << Logger::endl;
+        return false;
+    }
 
     if (l_arm_damping_factors_.size() != arm_joints_count_) {
         Logger::log() << Logger::Error <<
@@ -127,6 +142,34 @@ bool VelmaLowLevelSafety::configureHook() {
         return false;
     }
 
+    if (arm_q_limits_lo_.size() != arm_joints_count_) {
+        Logger::log() << Logger::Error <<
+            "parameter arm_q_limits_lo is set to illegal value (wrong vector size: " <<
+            arm_q_limits_lo_.size() << ")" << Logger::endl;
+        return false;
+    }
+
+    if (arm_q_limits_hi_.size() != arm_joints_count_) {
+        Logger::log() << Logger::Error <<
+            "parameter arm_q_limits_hi is set to illegal value (wrong vector size: " <<
+            arm_q_limits_hi_.size() << ")" << Logger::endl;
+        return false;
+    }
+
+    if (arm_dq_limits_.size() != arm_joints_count_) {
+        Logger::log() << Logger::Error <<
+            "parameter arm_dq_limits is set to illegal value (wrong vector size: " <<
+            arm_dq_limits_.size() << ")" << Logger::endl;
+        return false;
+    }
+
+    if (arm_t_limits_.size() != arm_joints_count_) {
+        Logger::log() << Logger::Error <<
+            "parameter arm_t_limits is set to illegal value (wrong vector size: " <<
+            arm_t_limits_.size() << ")" << Logger::endl;
+        return false;
+    }
+
     return true;
 }
 
@@ -139,6 +182,12 @@ bool VelmaLowLevelSafety::startHook() {
 
     // TODO: set this to false
     enable_command_mode_switch_ = true;
+
+    state_ = HW_DOWN;
+    allHwOk_ = false;
+    hwStatusValid_ = false;
+    readCmdData_ = false;
+    cmdValid_ = false;
 
 //    UNRESTRICT_ALLOC;
     return true;
@@ -204,207 +253,101 @@ void VelmaLowLevelSafety::calculateTorsoDampingTorque(double motor_velocity, dou
     motor_current_command = motor_torque_command / torso_gear / torso_motor_constant;
 }
 
-bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommand &cmd) {
-//    cmd.test = seed;
+std::string VelmaLowLevelSafety::cmdToStr(const VelmaLowLevelCommand &cmd) {
+    // TODO: this is surely non-RT
 
-    // check command code
-//    cmd.rHand_tactileCmd = static_cast<int32_t >(rand());
-
-    // test for NaN
-    if (cmd.tMotor_i != cmd.tMotor_i) {
-        return false;
-    }
-
-    if (cmd.hpMotor_i != cmd.hpMotor_i) {
-        return false;
-    }
-
-    if (cmd.htMotor_i != cmd.htMotor_i) {
-        return false;
-    }
-
-    if (cmd.hpMotor_q != cmd.hpMotor_q) {
-        return false;
-    }
-
-    if (cmd.htMotor_q != cmd.htMotor_q) {
-        return false;
-    }
-
-    if (cmd.hpMotor_dq != cmd.hpMotor_dq) {
-        return false;
-    }
-
-    if (cmd.htMotor_dq != cmd.htMotor_dq) {
-        return false;
-    }
-
-    if (cmd.lArm.t.size() != arm_joints_count_) {
-        return false;
-    }
-
-    if (cmd.rArm.t.size() != arm_joints_count_) {
-        return false;
-    }
+    std::ostringstream strs;
+    strs << cmd.tMotor.i << " " << cmd.hpMotor.i << " " << cmd.htMotor.i << " " << cmd.hpMotor.q << " " << cmd.htMotor.q << " " <<
+        cmd.hpMotor.dq << " " << cmd.htMotor.dq << " " << cmd.lArm.t.size() << " " << cmd.rArm.t.size() << " ";
 
     for (int i = 0; i < arm_joints_count_; ++i) {
-        if (cmd.lArm.t[i] != cmd.lArm.t[i]) {
-            return false;
-        }
-
-        if (cmd.rArm.t[i] != cmd.rArm.t[i]) {
-            return false;
-        }
+        strs << cmd.lArm.t[i] << " ";
+        strs << cmd.rArm.t[i] << " ";
     }
 
-    // TODO: check FRI commands
-//    cmd.lArm.cmd.data = static_cast<int32_t >(rand());
-//    cmd.lArm.cmd_valid = true;
-//    cmd.rArm.cmd.data = static_cast<int32_t >(rand());
-//    cmd.rArm.cmd_valid = true;
-
-    if (cmd.lHand.q.size() != 4) {
-        return false;
-    }
-
-    if (cmd.lHand.dq.size() != 4) {
-        return false;
-    }
-
-    if (cmd.lHand.max_p.size() != 4) {
-        return false;
-    }
-
-    if (cmd.lHand.max_i.size() != 4) {
-        return false;
-    }
-
-    if (cmd.rHand.q.size() != 4) {
-        return false;
-    }
-
-    if (cmd.rHand.dq.size() != 4) {
-        return false;
-    }
-
-    if (cmd.rHand.max_p.size() != 4) {
-        return false;
-    }
-
-    if (cmd.rHand.max_i.size() != 4) {
-        return false;
-    }
+    strs << cmd.lHand.q.size() << " " << cmd.lHand.dq.size() << " " << cmd.lHand.max_p.size() << " " <<
+        cmd.lHand.max_i.size() << " " << cmd.rHand.q.size() << " " << cmd.rHand.dq.size() << " " <<
+        cmd.rHand.max_p.size() << " " << cmd.rHand.max_i.size() << " ";
 
     for (int i = 0; i < 4; ++i) {
-        if (cmd.lHand.q[i] != cmd.lHand.q[i]) {
-            return false;
-        }
-
-        if (cmd.lHand.dq[i] != cmd.lHand.dq[i]) {
-            return false;
-        }
-
-        if (cmd.lHand.max_p[i] != cmd.lHand.max_p[i]) {
-            return false;
-        }
-
-        if (cmd.lHand.max_i[i] != cmd.lHand.max_i[i]) {
-            return false;
-        }
-
-        if (cmd.rHand.q[i] != cmd.rHand.q[i]) {
-            return false;
-        }
-
-        if (cmd.rHand.dq[i] != cmd.rHand.dq[i]) {
-            return false;
-        }
-
-        if (cmd.rHand.max_p[i] != cmd.rHand.max_p[i]) {
-            return false;
-        }
-
-        if (cmd.rHand.max_i[i] != cmd.rHand.max_i[i]) {
-            return false;
-        }
+        strs << cmd.lHand.q[i] << " ";
+        strs << cmd.lHand.dq[i] << " ";
+        strs << cmd.lHand.max_p[i] << " ";
+        strs << cmd.lHand.max_i[i] << " ";
+        strs << cmd.rHand.q[i] << " ";
+        strs << cmd.rHand.dq[i] << " ";
+        strs << cmd.rHand.max_p[i] << " ";
+        strs << cmd.rHand.max_i[i] << " ";
     }
 
-//    cmd.lHand.hold = static_cast<bool >(rand()%2);
-//    cmd.rHand.hold = static_cast<bool >(rand()%2);
-//    cmd.lHand_valid = true;
-//    cmd.rHand_valid = true;
-
-    // TODO: check ranges
-
-    return true;
-}
-
-bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatus &st) {
-    // TODO: implement this
-    return true;
-}
-
-bool VelmaLowLevelSafety::isLwrOk(const tFriIntfState &fri_state, const tFriRobotState &robot_state) const {
-    if (robot_state.power != 0x7F || robot_state.error != 0 ||    // error
-        robot_state.warning != 0 ||                                // error?
-        robot_state.control != FRI_CTRL_JNT_IMP ||                 // error
-        fri_state.quality <= FRI_QUALITY_UNACCEPTABLE)             // error
-    {
-        // error
-        return false;
-    }
-    return true;
+    std::string str = strs.str();
+    return str;
 }
 
 void VelmaLowLevelSafety::updateHook() {
     Logger::In in("VelmaLowLevelSafety::updateHook");
 //    RESTRICT_ALLOC;
 
-    Logger::log() << Logger::Debug << Logger::endl;
-
     //
     // read HW status
     //
     status_in_.readPorts(status_);
 
-    bool allHwOk =  status_in_.getPorts().rArm_.valid_      && status_in_.getPorts().lArm_.valid_ &&
-                    status_in_.getPorts().rHand_.valid_     && status_in_.getPorts().lHand_.valid_ &&
-                    status_in_.getPorts().rFt_.valid_       && status_in_.getPorts().lFt_.valid_ &&
-                    status_in_.getPorts().tMotor_.valid_    && status_in_.getPorts().hpMotor_.valid_ &&
-                    status_in_.getPorts().htMotor_.valid_;
+    bool allHwOk_prev = allHwOk_;
+    bool hwStatusValid_prev = hwStatusValid_;
+    bool readCmdData_prev = readCmdData_;
+    bool cmdValid_prev = cmdValid_;
+
+    allHwOk_ =  status_in_.getPorts().rArm_.valid_      && status_in_.getPorts().lArm_.valid_ &&
+                status_in_.getPorts().rHand_.valid_     && status_in_.getPorts().lHand_.valid_ &&
+                status_in_.getPorts().rFt_.valid_       && status_in_.getPorts().lFt_.valid_ &&
+                status_in_.getPorts().tMotor_.valid_    && status_in_.getPorts().hpMotor_.valid_ &&
+                status_in_.getPorts().htMotor_.valid_;
 
     // TODO: check if the constraint == RTT::NewData is not too strict
     if (port_rArm_fri_state_in_.read(rArm_fri_state_) == RTT::NewData && port_rArm_robot_state_in_.read(rArm_robot_state_) == RTT::NewData) {
-        allHwOk &= isLwrOk(rArm_fri_state_, rArm_robot_state_);
+        allHwOk_ &= isLwrOk(rArm_fri_state_, rArm_robot_state_);
     }
     else {
-        allHwOk = false;
+        allHwOk_ = false;
     }
 
     if (port_lArm_fri_state_in_.read(lArm_fri_state_) == RTT::NewData && port_lArm_robot_state_in_.read(lArm_robot_state_) == RTT::NewData) {
-        allHwOk &= isLwrOk(lArm_fri_state_, lArm_robot_state_);
+        allHwOk_ &= isLwrOk(lArm_fri_state_, lArm_robot_state_);
     }
     else {
-        allHwOk = false;
+        allHwOk_ = false;
     }
 
-    bool hwStatusValid = allHwOk && isStatusValid(status_);
+    hwStatusValid_ = allHwOk_ && isStatusValid(status_);
     
     //
     // read commands
     //
-    bool cmdValid = false;
-    if (port_command_in_.read(cmd_in_) == NewData && isCommandValid(cmd_in_)) {
-        cmdValid = true;
+    readCmdData_ = (port_command_in_.read(cmd_in_) == NewData);
+    cmdValid_ = false;
+    if (readCmdData_ && isCommandValid(cmd_in_)) {
+        cmdValid_ = true;
     }
 
     const SafetyControllerState prev_state = state_;
+
+    if (allHwOk_prev != allHwOk_ || hwStatusValid_prev != hwStatusValid_ || readCmdData_prev != readCmdData_ ||
+        cmdValid_prev != cmdValid_) {
+
+        Logger::log() << Logger::Info << "state: " << getStateName(state_) <<
+            "  allHwOk: " << (allHwOk_?"T":"F") <<
+            "  hwStatusValid: " << (hwStatusValid_?"T":"F") <<
+            "  readCmdData: " << (readCmdData_?"T":"F") <<
+            "  cmdValid: " << (cmdValid_?"T":"F") << Logger::endl;
+        Logger::log() << Logger::Info << "cmd: " << cmdToStr(cmd_in_) << Logger::endl;
+    }
 
     //
     // manage FSM state transitions
     //
     if (HW_DOWN == state_) {
-        if (hwStatusValid) {
+        if (allHwOk_) {
             state_ = HW_DISABLED;
             counts_HW_DISABLED_ = 0;
         }
@@ -413,44 +356,37 @@ void VelmaLowLevelSafety::updateHook() {
         ++counts_HW_DISABLED_;
 
         // state changes
-        if (!hwStatusValid) {
+        if (!allHwOk_) {
             // one or more HW components are down
             state_ = HW_DOWN;
         }
-        else if (counts_HW_DISABLED_ > 50) {
-            // hwStatusValid == true
-
-            if (cmdValid && cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
+        else if (hwStatusValid_ && counts_HW_DISABLED_ > 50) {
+            if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
                 // change state to HW_ENABLED
                 state_ = HW_ENABLED;
-
-                // TODO: set proper FRI commands!
-            }
-            else {
-                // stay in the state HW_DISABLED
             }
         }
     }
     else if (HW_ENABLED == state_) {
-        if (!allHwOk) {
+        if (!allHwOk_) {
             state_ = HW_DOWN;
         }
-        else if (!hwStatusValid) {
+        else if (!hwStatusValid_) {
             state_ = HW_DISABLED;
         }
-        else if (cmdValid && cmd_in_.sc.valid && cmd_in_.sc.cmd == 2) {
+        else if (cmdValid_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 2) {
             // change state to HW_ENABLED
             state_ = CONTROL_ENABLED;
         }
     }
     else if (CONTROL_ENABLED == state_) {
-        if (!allHwOk) {
+        if (!allHwOk_) {
             state_ = HW_DOWN;
         }
-        else if (!hwStatusValid) {
+        else if (!hwStatusValid_) {
             state_ = HW_DISABLED;
         }
-        else if (!cmdValid) {
+        else if (!cmdValid_) {
             state_ = HW_ENABLED;
         }
     }
@@ -465,34 +401,46 @@ void VelmaLowLevelSafety::updateHook() {
     if (HW_DOWN == state_) {
         // do nothing
     }
-    else if (HW_DISABLED == state_ || HW_ENABLED == state_) {
-        // generate safe outputs
+    else if (HW_DISABLED == state_) {
+        // generate safe outputs for all operational devices
         if (status_in_.getPorts().rArm_.valid_) {
             arm_dq_.convertFromROS(status_.rArm.dq);
             calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
             arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
+            out_.getPorts().rArm_.convertFromROS(cmd_out_.rArm);
+            out_.getPorts().rArm_.writePorts();
         }
 
         if (status_in_.getPorts().lArm_.valid_) {
             arm_dq_.convertFromROS(status_.lArm.dq);
             calculateArmDampingTorque(arm_dq_.data_, l_arm_damping_factors_, arm_t_cmd_.data_);
             arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
+            out_.getPorts().lArm_.convertFromROS(cmd_out_.lArm);
+            out_.getPorts().lArm_.writePorts();
         }
 
         if (status_in_.getPorts().tMotor_.valid_) {
-            calculateTorsoDampingTorque(status_.tMotor.dq, cmd_out_.tMotor_i);
+            calculateTorsoDampingTorque(status_.tMotor.dq, cmd_out_.tMotor.i);
+            cmd_out_.tMotor.q = 0;
+            cmd_out_.tMotor.dq = 0;
+            out_.getPorts().tMotor_.convertFromROS(cmd_out_.tMotor);
+            out_.getPorts().tMotor_.writePorts();
         }
 
         if (status_in_.getPorts().hpMotor_.valid_) {
-            cmd_out_.hpMotor_i = 0;
-            cmd_out_.hpMotor_q = status_.hpMotor.q;
-            cmd_out_.hpMotor_dq = 0;
+            cmd_out_.hpMotor.i = 0;
+            cmd_out_.hpMotor.q = status_.hpMotor.q;
+            cmd_out_.hpMotor.dq = 0;
+            out_.getPorts().hpMotor_.convertFromROS(cmd_out_.hpMotor);
+            out_.getPorts().hpMotor_.writePorts();
         }
 
         if (status_in_.getPorts().htMotor_.valid_) {
-            cmd_out_.htMotor_i = 0;
-            cmd_out_.htMotor_q = status_.htMotor.q;
-            cmd_out_.htMotor_dq = 0;
+            cmd_out_.htMotor.i = 0;
+            cmd_out_.htMotor.q = status_.htMotor.q;
+            cmd_out_.htMotor.dq = 0;
+            out_.getPorts().htMotor_.convertFromROS(cmd_out_.htMotor);
+            out_.getPorts().htMotor_.writePorts();
         }
 
         cmd_out_.rTact.cmd = 0;
@@ -500,10 +448,45 @@ void VelmaLowLevelSafety::updateHook() {
         cmd_out_.rHand.valid = false;
         cmd_out_.lHand.valid = false;
 
+        // send safe commands to available devices
         out_.writePorts(cmd_out_);
+        // do not send HW status to higher level - it may be inconsistent
     }
-    else if (CONTROL_ENABLED == state_) {
-        out_.writePorts(cmd_in_);
+    else if (HW_ENABLED == state_) {
+        // sanity check
+        if (!status_in_.getPorts().rArm_.valid_ || !status_in_.getPorts().lArm_.valid_ ||
+            !status_in_.getPorts().tMotor_.valid_ || !status_in_.getPorts().hpMotor_.valid_ ||
+            !status_in_.getPorts().htMotor_.valid_) {
+
+            Logger::log() << Logger::Error << "some of devices are not operational in HW_ENABLED state" << Logger::endl;
+            return;
+        }
+
+        arm_dq_.convertFromROS(status_.rArm.dq);
+        calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
+        arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
+
+        arm_dq_.convertFromROS(status_.lArm.dq);
+        calculateArmDampingTorque(arm_dq_.data_, l_arm_damping_factors_, arm_t_cmd_.data_);
+        arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
+
+        calculateTorsoDampingTorque(status_.tMotor.dq, cmd_out_.tMotor.i);
+
+        cmd_out_.hpMotor.i = 0;
+        cmd_out_.hpMotor.q = status_.hpMotor.q;
+        cmd_out_.hpMotor.dq = 0;
+
+        cmd_out_.htMotor.i = 0;
+        cmd_out_.htMotor.q = status_.htMotor.q;
+        cmd_out_.htMotor.dq = 0;
+
+        cmd_out_.rTact.cmd = 0;
+        cmd_out_.rTact.valid = false;
+        cmd_out_.rHand.valid = false;
+        cmd_out_.lHand.valid = false;
+
+        out_.writePorts(cmd_out_);
+        port_status_out_.write(status_);
 
         if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
             // send FRI commands
@@ -518,220 +501,10 @@ void VelmaLowLevelSafety::updateHook() {
             }
         }
     }
-
-/*
-    no_hw_error_counter_++;
-
-    bool status_received = false;
-*/
-
-/*    if (port_status_in_.read(status_in_) == NewData) {
-*/
-
-// TODO: manage FRI
-/*
-        tFriIntfState *lArmFri = reinterpret_cast<tFriIntfState*>(&status_in_.lArm.friIntfState[0]);
-        tFriRobotState *lArmRobot = reinterpret_cast<tFriRobotState*>(&status_in_.lArm.friRobotState[0]);
-
-        tFriIntfState *rArmFri = reinterpret_cast<tFriIntfState*>(&status_in_.rArm.friIntfState[0]);
-        tFriRobotState *rArmRobot = reinterpret_cast<tFriRobotState*>(&status_in_.rArm.friRobotState[0]);
-
-        if (lArmRobot->power != 0x7F || rArmRobot->power != 0x7F || lArmRobot->error != 0 || rArmRobot->error != 0 ||   // error
-            lArmRobot->warning != 0 || rArmRobot->warning != 0 ||   // error?
-            lArmRobot->control != FRI_CTRL_JNT_IMP || rArmRobot->control != FRI_CTRL_JNT_IMP ||     // error
-            lArmFri->quality <= FRI_QUALITY_UNACCEPTABLE || rArmFri->quality <= FRI_QUALITY_UNACCEPTABLE)   // error
-        {
-            // error
-            no_hw_error_counter_ = 0;
-        }
-
-        lArm_fri_state_ = lArmFri->state;
-        rArm_fri_state_ = rArmFri->state;
-
-        // robot power
-        if (lArmRobot->power != 0x7F) {
-            // error
-            Logger::log() << Logger::Info << "lArmRobot->power != 0x7F" << Logger::endl;
-        }
-        else if (rArmRobot->power != 0x7F) {
-            // error
-            Logger::log() << Logger::Info << "rArmRobot->power != 0x7F" << Logger::endl;
-        }
-        else if (lArmRobot->error != 0) {
-            // error
-            Logger::log() << Logger::Info << "lArmRobot->error != 0" << Logger::endl;
-        }
-        else if (rArmRobot->error != 0) {
-            // error
-            Logger::log() << Logger::Info << "rArmRobot->error != 0" << Logger::endl;
-        }
-        else if (lArmRobot->warning != 0) {
-            // error?
-            Logger::log() << Logger::Info << "lArmRobot->warning" << Logger::endl;
-        }
-        else if (rArmRobot->warning != 0) {
-            // error?
-            Logger::log() << Logger::Info << "rArmRobot->warning" << Logger::endl;
-        }
-        else if (lArmRobot->control != FRI_CTRL_JNT_IMP) {
-            // error
-            Logger::log() << Logger::Info << "lArmRobot->control != FRI_CTRL_JNT_IMP" << Logger::endl;
-        }
-        else if (rArmRobot->control != FRI_CTRL_JNT_IMP) {
-            // error
-            Logger::log() << Logger::Info << "rArmRobot->control != FRI_CTRL_JNT_IMP" << Logger::endl;
-        }
-        // FRI link quality
-        else if (lArmFri->quality <= FRI_QUALITY_UNACCEPTABLE) {
-            // error
-        }
-        else if (rArmFri->quality <= FRI_QUALITY_UNACCEPTABLE) {
-            // error
-        }
-*/
-/*
-        // TODO: verify robot status here
-        status_received = true;
-    }
-    else {
-        // could not receive valid status data
-        Logger::log() << Logger::Warning << "could not receive valid status data" << Logger::endl;
-        no_hw_error_counter_ = 0;
-    }
-*/
-
-/*
-    uint32_t comm_status_in = 0;
-    if (port_command_in_.read(cmd_in_) == NewData && is_command_valid(cmd_in_)) {
+    else if (CONTROL_ENABLED == state_) {
         out_.writePorts(cmd_in_);
-        if (emergency_) {
-            emergency_ = false;
-            Logger::log() << Logger::Info << "sending valid data..." << Logger::endl;
-        }
-        else {
-            Logger::log() << Logger::Debug << "sending valid data..." << Logger::endl;
-        }
+        port_status_out_.write(status_);
     }
-    else {
-        // emergency procedure
-        cmd_out_.rTact.cmd = 0;
-        cmd_out_.rTact.valid = false;
-        cmd_out_.tMotor_i = 0;
-        cmd_out_.hpMotor_i = 0;
-        cmd_out_.htMotor_i = 0;
-        cmd_out_.hpMotor_q = 0;
-        cmd_out_.htMotor_q = 0;
-        cmd_out_.hpMotor_dq = 0;
-        cmd_out_.htMotor_dq = 0;
-        for (int i = 0; i < arm_joints_count_; ++i) {
-            cmd_out_.rArm.t[i] = 0.0;
-            cmd_out_.lArm.t[i] = 0.0;
-        }
-
-        for (int i = 0; i < 4; ++i) {
-            cmd_out_.rHand.q[i] = 0;
-            cmd_out_.rHand.dq[i] = 0;
-            cmd_out_.rHand.max_p[i] = 0;
-            cmd_out_.rHand.max_i[i] = 0;
-            cmd_out_.lHand.q[i] = 0;
-            cmd_out_.lHand.dq[i] = 0;
-            cmd_out_.lHand.max_p[i] = 0;
-            cmd_out_.lHand.max_i[i] = 0;
-        }
-        cmd_out_.rHand.hold = false;
-        cmd_out_.lHand.hold = false;
-
-        if (!emergency_) {
-            emergency_ = true;
-//            rArm_safe_q_.convertFromROS(status_in_.rArm.q);
-//            lArm_safe_q_.convertFromROS(status_in_.lArm.q);
-            Logger::log() << Logger::Info << "sending emergency data..." << Logger::endl;
-        }
-        else {
-            Logger::log() << Logger::Debug << "sending emergency data" << Logger::endl;
-        }
-*/
-
-// TODO: manage FRI
-/*
-        if (enable_command_mode_switch_ && lArm_fri_state_ == FRI_STATE_MON && no_hw_error_counter_ > 1000) {
-            cmd_out_.lArm.cmd.data = 1;
-            cmd_out_.lArm.cmd_valid = true;
-            Logger::log() << Logger::Info << "switching lArm to command mode..." << Logger::endl;
-        }
-        else {
-            cmd_out_.lArm.cmd_valid = false;
-        }
-
-        if (enable_command_mode_switch_ && rArm_fri_state_ == FRI_STATE_MON && no_hw_error_counter_ > 1000) {
-            cmd_out_.rArm.cmd.data = 1;
-            cmd_out_.rArm.cmd_valid = true;
-            Logger::log() << Logger::Info << "switching rArm to command mode..." << Logger::endl;
-        }
-        else {
-            cmd_out_.rArm.cmd_valid = false;
-        }
-*/
-
-//        if (status_received) {
-            // right arm
-//            arm_q_.convertFromROS(status_in_.rArm.q);
-//            arm_dq_.convertFromROS(status_in_.rArm.dq);
-//            arm_mass77_.convertFromROS(status_in_.rArm.mmx);
-//            if ( calculateJntImpTorque(rArm_safe_q_.data_, arm_q_.data_, arm_dq_.data_,
-//                arm_k_, arm_mass77_.data_, arm_t_cmd_.data_) )
-//            {
-//                arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
-//            }
-
-// TODO: check validity
-/*
-            if (status_in_.rArm_valid) {
-                arm_dq_.convertFromROS(status_in_.rArm.dq);
-                calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
-                arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
-            }
-*/
-            // left arm
-//            arm_q_.convertFromROS(status_in_.lArm.q);
-//            arm_dq_.convertFromROS(status_in_.lArm.dq);
-//            arm_mass77_.convertFromROS(status_in_.lArm.mmx);
-//            if ( calculateJntImpTorque(lArm_safe_q_.data_, arm_q_.data_, arm_dq_.data_,
-//                arm_k_, arm_mass77_.data_, arm_t_cmd_.data_) )
-//            {
-//                arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
-//            }
-
-// TODO: check validity
-/*
-            if (status_in_.lArm_valid) {
-                arm_dq_.convertFromROS(status_in_.lArm.dq);
-                calculateArmDampingTorque(arm_dq_.data_, l_arm_damping_factors_, arm_t_cmd_.data_);
-                arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
-            }
-
-            if (status_in_.tMotor_valid) {
-                calculateTorsoDampingTorque(status_in_.tMotor_dq, cmd_out_.tMotor_i);
-            }
-
-            if (status_in_.hpMotor_valid) {
-                cmd_out_.hpMotor_i = 0;
-                cmd_out_.hpMotor_q = status_in_.hpMotor_q;
-                cmd_out_.hpMotor_dq = 0;
-            }
-
-            if (status_in_.htMotor_valid) {
-                cmd_out_.htMotor_i = 0;
-                cmd_out_.htMotor_q = status_in_.htMotor_q;
-                cmd_out_.htMotor_dq = 0;
-            }
-*/
-/*
-        }
-
-        out_.writePorts(cmd_out_);
-    }
-*/
 }
 
 ORO_LIST_COMPONENT_TYPE(VelmaLowLevelSafety)

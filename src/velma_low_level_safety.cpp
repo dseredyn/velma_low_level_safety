@@ -449,7 +449,7 @@ void VelmaLowLevelSafety::updateHook() {
         cmd_out_.lHand.valid = false;
 
         // send safe commands to available devices
-        out_.writePorts(cmd_out_);
+        //out_.writePorts(cmd_out_);
         // do not send HW status to higher level - it may be inconsistent
     }
     else if (HW_ENABLED == state_) {

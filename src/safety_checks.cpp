@@ -85,8 +85,8 @@ bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommand &cmd) const 
 bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusArm &st) const {
     for (int i = 0; i < arm_joints_count_; ++i) {
         if (!isInLim(st.q[i], arm_q_limits_lo_[i], arm_q_limits_hi_[i]) ||
-            !isInLim(st.dq[i], -arm_dq_limits_[i], arm_dq_limits_[i]) ||
-            !isInLim(st.t[i], -arm_t_limits_[i], arm_t_limits_[i]) ||
+            isNaN(st.dq[i]) ||
+            isNaN(st.t[i]) ||
             isNaN(st.gt[i]))
         {
             return false;

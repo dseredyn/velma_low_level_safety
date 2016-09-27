@@ -38,6 +38,8 @@
 #include "Eigen/Dense"
 #include "Eigen/LU"
 
+#include <std_msgs/UInt32.h>
+
 #include "velma_low_level_interface_msgs/VelmaLowLevelCommand.h"
 #include "velma_low_level_interface_msgs/VelmaLowLevelStatus.h"
 
@@ -64,11 +66,6 @@ public:
 
 private:
     const int arm_joints_count_;
-
-    bool calculateJntImpTorque(const Eigen::VectorXd &joint_position_command,
-        const Eigen::VectorXd &joint_position, const Eigen::VectorXd &joint_velocity,
-        const Eigen::VectorXd &k, const Eigen::Matrix77d &m,
-        Eigen::VectorXd &joint_torque_command);
 
     void calculateArmDampingTorque(const Eigen::VectorXd &joint_velocity,
         const std::vector<double> &damping_factors, Eigen::VectorXd &joint_torque_command);
@@ -146,12 +143,10 @@ private:
     // port data
     VelmaLowLevelCommand cmd_out_;
     VelmaLowLevelCommand cmd_in_;
-//    VelmaLowLevelStatus status_in_;
 
     VelmaLLICommandOutput out_;
 
     RTT::InputPort<VelmaLowLevelCommand> port_command_in_;
-//    RTT::InputPort<VelmaLowLevelStatus> port_status_in_;
     RTT::OutputPort<VelmaLowLevelStatus> port_status_out_;
 
     // additional HW control ports
@@ -162,6 +157,9 @@ private:
     RTT::OutputPort<std_msgs::Int32 >   port_rArm_KRL_CMD_out_;             // FRIx.KRL_CMD
     RTT::OutputPort<std_msgs::Int32 >   port_lArm_KRL_CMD_out_;             // FRIx.KRL_CMD
 
+    // additional status port
+    RTT::OutputPort<std_msgs::UInt32 >   port_robot_status_out_;
+
     tFriIntfState       rArm_fri_state_;
     tFriRobotState      rArm_robot_state_;
     tFriIntfState       lArm_fri_state_;
@@ -169,11 +167,7 @@ private:
     std_msgs::Int32     rArm_KRL_CMD_;             // FRIx.KRL_CMD
     std_msgs::Int32     lArm_KRL_CMD_;             // FRIx.KRL_CMD
 
-//    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > rArm_safe_q_;
-//    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > lArm_safe_q_;
-//    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_q_;
     velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_dq_;
-//    velma_lli_types::PortRawData<Eigen::Matrix77d, boost::array<double, 28ul> > arm_mass77_;
     velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_t_cmd_;
 
     bool emergency_;
@@ -187,8 +181,6 @@ private:
     Eigen::MatrixXd tmpNN_;
 
     int no_hw_error_counter_;
-    bool enable_command_mode_switch_;
-
 
     bool allHwOk_;
     bool hwStatusValid_;

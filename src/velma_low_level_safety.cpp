@@ -43,7 +43,8 @@ const std::string& VelmaLowLevelSafety::getStateName(SafetyControllerState state
     if (state == HW_DOWN) {
         return state_names_[0];
     }
-    else if (state == HW_DISABLED) {
+    else
+    if (state == HW_DISABLED) {
         return state_names_[1];
     }
     else if (state == HW_ENABLED) {
@@ -74,6 +75,8 @@ VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
 
     this->ports()->addPort("cmd_rArm_cmd_OUTPORT", port_rArm_KRL_CMD_out_);
     this->ports()->addPort("cmd_lArm_cmd_OUTPORT", port_lArm_KRL_CMD_out_);
+
+    this->ports()->addPort("port_robot_status_OUTPORT", port_robot_status_out_);
 
     addProperty("l_arm_damping_factors", l_arm_damping_factors_);
     addProperty("r_arm_damping_factors", r_arm_damping_factors_);
@@ -180,9 +183,6 @@ bool VelmaLowLevelSafety::startHook() {
 
     no_hw_error_counter_ = 0;
 
-    // TODO: set this to false
-    enable_command_mode_switch_ = true;
-
     state_ = HW_DOWN;
     allHwOk_ = false;
     hwStatusValid_ = false;
@@ -194,40 +194,6 @@ bool VelmaLowLevelSafety::startHook() {
 }
 
 void VelmaLowLevelSafety::stopHook() {
-}
-
-bool VelmaLowLevelSafety::calculateJntImpTorque(const Eigen::VectorXd &joint_position_command,
-    const Eigen::VectorXd &joint_position, const Eigen::VectorXd &joint_velocity,
-    const Eigen::VectorXd &k, const Eigen::Matrix77d &m,
-    Eigen::VectorXd &joint_torque_command)
-{
-    Logger::In in("VelmaLowLevelSafety::calculateJntImpTorque");
-
-    joint_error_.noalias() = joint_position_command - joint_position;
-    joint_torque_command.noalias() = k.cwiseProduct(joint_error_);
-
-    if (!joint_torque_command.allFinite()) {
-        Logger::log() << Logger::Error << "Non finite output from stiffness" << Logger::endl;
-        return false;
-    }
-
-    tmpNN_ = k.asDiagonal();
-    es_.compute(tmpNN_, m);
-    q_ = es_.eigenvectors().inverse();
-    k0_ = es_.eigenvalues();
-
-    tmpNN_ = k0_.cwiseAbs().cwiseSqrt().asDiagonal();
-
-    d_.noalias() = 2.0 * q_.transpose() * 0.7 * tmpNN_ * q_;
-    joint_torque_command.noalias() -= d_ * joint_velocity;
-    if (!joint_torque_command.allFinite()) {
-        Logger::log() << Logger::Error <<
-            "Non finite output from damping: s_q: " << joint_position_command.transpose() <<
-            " q: " << joint_position.transpose() << " dq: " << joint_velocity.transpose() <<
-            " k: " << k.transpose() << " m: " << m << Logger::endl;
-        return false;
-    }
-    return true;
 }
 
 void VelmaLowLevelSafety::calculateArmDampingTorque(const Eigen::VectorXd &joint_velocity,
@@ -291,36 +257,57 @@ void VelmaLowLevelSafety::updateHook() {
     //
     // read HW status
     //
+    bool rArm_valid_prev = status_in_.getPorts().rArm_.valid_;
+    bool lArm_valid_prev = status_in_.getPorts().lArm_.valid_;
+
     status_in_.readPorts(status_);
 
     bool allHwOk_prev = allHwOk_;
-    bool hwStatusValid_prev = hwStatusValid_;
     bool readCmdData_prev = readCmdData_;
     bool cmdValid_prev = cmdValid_;
 
-    allHwOk_ =  status_in_.getPorts().rArm_.valid_      && status_in_.getPorts().lArm_.valid_ &&
-                status_in_.getPorts().rHand_.valid_     && status_in_.getPorts().lHand_.valid_ &&
-                status_in_.getPorts().rFt_.valid_       && status_in_.getPorts().lFt_.valid_ &&
-                status_in_.getPorts().tMotor_.valid_    && status_in_.getPorts().hpMotor_.valid_ &&
-                status_in_.getPorts().htMotor_.valid_;
+    // as FRI components are not synchronized, their communication shatus should
+    // be checked in two last cycles
+    bool rArm_valid = rArm_valid_prev || status_in_.getPorts().rArm_.valid_;
+    bool lArm_valid = lArm_valid_prev || status_in_.getPorts().lArm_.valid_;
 
-    // TODO: check if the constraint == RTT::NewData is not too strict
+    // check FRI and LWR state
+    // as FRI components may not be synchronized
     if (port_rArm_fri_state_in_.read(rArm_fri_state_) == RTT::NewData && port_rArm_robot_state_in_.read(rArm_robot_state_) == RTT::NewData) {
-        allHwOk_ &= isLwrOk(rArm_fri_state_, rArm_robot_state_);
+        rArm_valid &= isLwrOk(rArm_fri_state_, rArm_robot_state_);
     }
-    else {
-        allHwOk_ = false;
-    }
-
     if (port_lArm_fri_state_in_.read(lArm_fri_state_) == RTT::NewData && port_lArm_robot_state_in_.read(lArm_robot_state_) == RTT::NewData) {
-        allHwOk_ &= isLwrOk(lArm_fri_state_, lArm_robot_state_);
+        lArm_valid &= isLwrOk(lArm_fri_state_, lArm_robot_state_);
     }
-    else {
-        allHwOk_ = false;
-    }
+    rArm_valid &= isStatusValid(status_.rArm);
+    lArm_valid &= isStatusValid(status_.lArm);
 
-    hwStatusValid_ = allHwOk_ && isStatusValid(status_);
-    
+    bool rHand_valid = status_in_.getPorts().rHand_.valid_ && isStatusValid(status_.rHand);
+    bool lHand_valid = status_in_.getPorts().lHand_.valid_ && isStatusValid(status_.lHand);
+
+    bool rFt_valid = status_in_.getPorts().rFt_.valid_ && isStatusValid(status_.rFt);
+    bool lFt_valid = status_in_.getPorts().lFt_.valid_ && isStatusValid(status_.lFt);
+
+    bool tMotor_valid = status_in_.getPorts().tMotor_.valid_ && isStatusValid(status_.tMotor);
+    bool hpMotor_valid = status_in_.getPorts().hpMotor_.valid_ && isStatusValid(status_.hpMotor);
+    bool htMotor_valid = status_in_.getPorts().htMotor_.valid_ && isStatusValid(status_.htMotor);
+
+    allHwOk_ =  rArm_valid      && lArm_valid &&
+                rHand_valid     && lHand_valid &&
+                rFt_valid       && lFt_valid &&
+                tMotor_valid    && hpMotor_valid &&
+                htMotor_valid;
+
+    // send diagnostic information about robot state
+    std_msgs::UInt32 robot_state;
+    robot_state.data =  rArm_valid          | (lArm_valid<<1) |
+                        (rHand_valid<<2)    | (lHand_valid<<3) |
+                        (rFt_valid<<4)      | (lFt_valid<<5) |
+                        (tMotor_valid<<6)   | (hpMotor_valid<<7) |
+                        (htMotor_valid<<8);
+
+    port_robot_status_out_.write(robot_state);
+
     //
     // read commands
     //
@@ -332,12 +319,11 @@ void VelmaLowLevelSafety::updateHook() {
 
     const SafetyControllerState prev_state = state_;
 
-    if (allHwOk_prev != allHwOk_ || hwStatusValid_prev != hwStatusValid_ || readCmdData_prev != readCmdData_ ||
+    if (allHwOk_prev != allHwOk_ || allHwOk_prev != allHwOk_ || readCmdData_prev != readCmdData_ ||
         cmdValid_prev != cmdValid_) {
 
         Logger::log() << Logger::Info << "state: " << getStateName(state_) <<
             "  allHwOk: " << (allHwOk_?"T":"F") <<
-            "  hwStatusValid: " << (hwStatusValid_?"T":"F") <<
             "  readCmdData: " << (readCmdData_?"T":"F") <<
             "  cmdValid: " << (cmdValid_?"T":"F") << Logger::endl;
         Logger::log() << Logger::Info << "cmd: " << cmdToStr(cmd_in_) << Logger::endl;
@@ -349,30 +335,21 @@ void VelmaLowLevelSafety::updateHook() {
     if (HW_DOWN == state_) {
         if (allHwOk_) {
             state_ = HW_DISABLED;
-            counts_HW_DISABLED_ = 0;
         }
     }
     else if (HW_DISABLED == state_) {
-        ++counts_HW_DISABLED_;
-
         // state changes
         if (!allHwOk_) {
             // one or more HW components are down
             state_ = HW_DOWN;
         }
-        else if (hwStatusValid_ && counts_HW_DISABLED_ > 50) {
-            if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
-                // change state to HW_ENABLED
-                state_ = HW_ENABLED;
-            }
+        else if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
+            state_ = HW_ENABLED;
         }
     }
     else if (HW_ENABLED == state_) {
         if (!allHwOk_) {
             state_ = HW_DOWN;
-        }
-        else if (!hwStatusValid_) {
-            state_ = HW_DISABLED;
         }
         else if (cmdValid_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 2) {
             // change state to HW_ENABLED
@@ -382,9 +359,6 @@ void VelmaLowLevelSafety::updateHook() {
     else if (CONTROL_ENABLED == state_) {
         if (!allHwOk_) {
             state_ = HW_DOWN;
-        }
-        else if (!hwStatusValid_) {
-            state_ = HW_DISABLED;
         }
         else if (!cmdValid_) {
             state_ = HW_ENABLED;
@@ -399,11 +373,12 @@ void VelmaLowLevelSafety::updateHook() {
     // execute states behaviours
     //
     if (HW_DOWN == state_) {
-        // do nothing
-    }
-    else if (HW_DISABLED == state_) {
+        //
+        // write HW commands to available devices
+        //
+
         // generate safe outputs for all operational devices
-        if (status_in_.getPorts().rArm_.valid_) {
+        if (rArm_valid) {
             arm_dq_.convertFromROS(status_.rArm.dq);
             calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
             arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
@@ -411,7 +386,7 @@ void VelmaLowLevelSafety::updateHook() {
             out_.getPorts().rArm_.writePorts();
         }
 
-        if (status_in_.getPorts().lArm_.valid_) {
+        if (lArm_valid) {
             arm_dq_.convertFromROS(status_.lArm.dq);
             calculateArmDampingTorque(arm_dq_.data_, l_arm_damping_factors_, arm_t_cmd_.data_);
             arm_t_cmd_.convertToROS(cmd_out_.lArm.t);
@@ -419,7 +394,7 @@ void VelmaLowLevelSafety::updateHook() {
             out_.getPorts().lArm_.writePorts();
         }
 
-        if (status_in_.getPorts().tMotor_.valid_) {
+        if (tMotor_valid) {
             calculateTorsoDampingTorque(status_.tMotor.dq, cmd_out_.tMotor.i);
             cmd_out_.tMotor.q = 0;
             cmd_out_.tMotor.dq = 0;
@@ -427,7 +402,7 @@ void VelmaLowLevelSafety::updateHook() {
             out_.getPorts().tMotor_.writePorts();
         }
 
-        if (status_in_.getPorts().hpMotor_.valid_) {
+        if (hpMotor_valid) {
             cmd_out_.hpMotor.i = 0;
             cmd_out_.hpMotor.q = status_.hpMotor.q;
             cmd_out_.hpMotor.dq = 0;
@@ -435,33 +410,15 @@ void VelmaLowLevelSafety::updateHook() {
             out_.getPorts().hpMotor_.writePorts();
         }
 
-        if (status_in_.getPorts().htMotor_.valid_) {
+        if (htMotor_valid) {
             cmd_out_.htMotor.i = 0;
             cmd_out_.htMotor.q = status_.htMotor.q;
             cmd_out_.htMotor.dq = 0;
             out_.getPorts().htMotor_.convertFromROS(cmd_out_.htMotor);
             out_.getPorts().htMotor_.writePorts();
         }
-
-        cmd_out_.rTact.cmd = 0;
-        cmd_out_.rTact.valid = false;
-        cmd_out_.rHand.valid = false;
-        cmd_out_.lHand.valid = false;
-
-        // send safe commands to available devices
-        //out_.writePorts(cmd_out_);
-        // do not send HW status to higher level - it may be inconsistent
     }
-    else if (HW_ENABLED == state_) {
-        // sanity check
-        if (!status_in_.getPorts().rArm_.valid_ || !status_in_.getPorts().lArm_.valid_ ||
-            !status_in_.getPorts().tMotor_.valid_ || !status_in_.getPorts().hpMotor_.valid_ ||
-            !status_in_.getPorts().htMotor_.valid_) {
-
-            Logger::log() << Logger::Error << "some of devices are not operational in HW_ENABLED state" << Logger::endl;
-            return;
-        }
-
+    else if (HW_DISABLED == state_ || HW_ENABLED == state_) {
         arm_dq_.convertFromROS(status_.rArm.dq);
         calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
         arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
@@ -485,11 +442,22 @@ void VelmaLowLevelSafety::updateHook() {
         cmd_out_.rHand.valid = false;
         cmd_out_.lHand.valid = false;
 
+        //
+        // write HW commands
+        //
         out_.writePorts(cmd_out_);
+
+        //
+        // write status
+        //
+        status_.sc.state_id = static_cast<int32_t >(state_);
+        status_.sc.error_code = 0;
         port_status_out_.write(status_);
 
-        if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
-            // send FRI commands
+        if (HW_ENABLED == state_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
+            //
+            // write FRI commands
+            //
             if (rArm_fri_state_.state == FRI_STATE_MON) {
                 rArm_KRL_CMD_.data = 1;
                 port_rArm_KRL_CMD_out_.write(rArm_KRL_CMD_);
@@ -502,7 +470,16 @@ void VelmaLowLevelSafety::updateHook() {
         }
     }
     else if (CONTROL_ENABLED == state_) {
+        //
+        // write HW commands
+        //
         out_.writePorts(cmd_in_);
+
+        //
+        // write status
+        //
+        status_.sc.state_id = static_cast<int32_t >(state_);
+        status_.sc.error_code = 0;
         port_status_out_.write(status_);
     }
 }

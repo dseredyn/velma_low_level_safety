@@ -39,18 +39,18 @@ using namespace RTT;
 
 const std::string VelmaLowLevelSafety::state_names_[5] = {"HW_DOWN", "HW_DISABLED", "HW_ENABLED", "CONTROL_ENABLED", "unknown"};
 
-const std::string& VelmaLowLevelSafety::getStateName(SafetyControllerState state) const {
-    if (state == HW_DOWN) {
+const std::string& VelmaLowLevelSafety::getStateName(int32_t state) const {
+    if (state == VelmaLowLevelStatusSC::HW_DOWN) {
         return state_names_[0];
     }
     else
-    if (state == HW_DISABLED) {
+    if (state == VelmaLowLevelStatusSC::HW_DISABLED) {
         return state_names_[1];
     }
-    else if (state == HW_ENABLED) {
+    else if (state == VelmaLowLevelStatusSC::HW_ENABLED) {
         return state_names_[2];
     }
-    else if (state == CONTROL_ENABLED) {
+    else if (state == VelmaLowLevelStatusSC::CONTROL_ENABLED) {
         return state_names_[3];
     }
     return state_names_[4];
@@ -59,7 +59,7 @@ const std::string& VelmaLowLevelSafety::getStateName(SafetyControllerState state
 VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
     TaskContext(name, PreOperational),
     arm_joints_count_(7),
-    state_(HW_DOWN),
+    state_(VelmaLowLevelStatusSC::HW_DOWN),
     out_(*this),
     status_in_(*this),
     torso_damping_factor_(-1)  // initialize with invalid value, should be later set to >= 0
@@ -183,11 +183,13 @@ bool VelmaLowLevelSafety::startHook() {
 
     no_hw_error_counter_ = 0;
 
-    state_ = HW_DOWN;
+    state_ = VelmaLowLevelStatusSC::HW_DOWN;
     allHwOk_ = false;
     hwStatusValid_ = false;
     readCmdData_ = false;
     cmdValid_ = false;
+
+    packet_counter_ = 1;
 
 //    UNRESTRICT_ALLOC;
     return true;
@@ -317,7 +319,12 @@ void VelmaLowLevelSafety::updateHook() {
         cmdValid_ = true;
     }
 
-    const SafetyControllerState prev_state = state_;
+    if (readCmdData_ && cmd_in_.test != packet_counter_ && VelmaLowLevelStatusSC::HW_DOWN != state_) {
+        Logger::log() << Logger::Warning << "received wrong cmd frame: " << cmd_in_.test << " should be " << packet_counter_ << Logger::endl;
+    }
+
+
+    const int32_t prev_state = state_;
 
     if (allHwOk_prev != allHwOk_ || allHwOk_prev != allHwOk_ || readCmdData_prev != readCmdData_ ||
         cmdValid_prev != cmdValid_) {
@@ -329,39 +336,53 @@ void VelmaLowLevelSafety::updateHook() {
         Logger::log() << Logger::Info << "cmd: " << cmdToStr(cmd_in_) << Logger::endl;
     }
 
+    if (cmd_in_.sc.valid) {
+        if (cmd_in_.sc.cmd == 1) {
+            Logger::log() << Logger::Info << "received cmd: enable_hw" << Logger::endl;
+        }
+        else if (cmd_in_.sc.cmd == 2) {
+            Logger::log() << Logger::Info << "received cmd: enable_control" << Logger::endl;
+        }
+        else {
+            Logger::log() << Logger::Info << "received wrong cmd: " << cmd_in_.sc.cmd << Logger::endl;
+        }
+    }
+
     //
     // manage FSM state transitions
     //
-    if (HW_DOWN == state_) {
+    if (VelmaLowLevelStatusSC::HW_DOWN == state_) {
         if (allHwOk_) {
-            state_ = HW_DISABLED;
+            state_ = VelmaLowLevelStatusSC::HW_DISABLED;
         }
     }
-    else if (HW_DISABLED == state_) {
+    else if (VelmaLowLevelStatusSC::HW_DISABLED == state_) {
         // state changes
         if (!allHwOk_) {
             // one or more HW components are down
-            state_ = HW_DOWN;
+            state_ = VelmaLowLevelStatusSC::HW_DOWN;
         }
         else if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
-            state_ = HW_ENABLED;
+            state_ = VelmaLowLevelStatusSC::HW_ENABLED;
+            Logger::log() << Logger::Info << "accepted cmd: enable_hw" << Logger::endl;
         }
     }
-    else if (HW_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::HW_ENABLED == state_) {
         if (!allHwOk_) {
-            state_ = HW_DOWN;
+            state_ = VelmaLowLevelStatusSC::HW_DOWN;
         }
         else if (cmdValid_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 2) {
             // change state to HW_ENABLED
-            state_ = CONTROL_ENABLED;
+            state_ = VelmaLowLevelStatusSC::CONTROL_ENABLED;
+            Logger::log() << Logger::Info << "accepted cmd: enable_control" << Logger::endl;
         }
     }
-    else if (CONTROL_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::CONTROL_ENABLED == state_) {
         if (!allHwOk_) {
-            state_ = HW_DOWN;
+            state_ = VelmaLowLevelStatusSC::HW_DOWN;
         }
         else if (!cmdValid_) {
-            state_ = HW_ENABLED;
+            state_ = VelmaLowLevelStatusSC::HW_ENABLED;
         }
     }
 
@@ -372,7 +393,7 @@ void VelmaLowLevelSafety::updateHook() {
     //
     // execute states behaviours
     //
-    if (HW_DOWN == state_) {
+    if (VelmaLowLevelStatusSC::HW_DOWN == state_) {
         //
         // write HW commands to available devices
         //
@@ -418,7 +439,7 @@ void VelmaLowLevelSafety::updateHook() {
             out_.getPorts().htMotor_.writePorts();
         }
     }
-    else if (HW_DISABLED == state_ || HW_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::HW_DISABLED == state_ || VelmaLowLevelStatusSC::HW_ENABLED == state_) {
         arm_dq_.convertFromROS(status_.rArm.dq);
         calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
         arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
@@ -452,9 +473,11 @@ void VelmaLowLevelSafety::updateHook() {
         //
         status_.sc.state_id = static_cast<int32_t >(state_);
         status_.sc.error_code = 0;
+        ++packet_counter_;
+        status_.test = packet_counter_;
         port_status_out_.write(status_);
 
-        if (HW_ENABLED == state_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
+        if (VelmaLowLevelStatusSC::HW_ENABLED == state_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
             //
             // write FRI commands
             //
@@ -469,7 +492,7 @@ void VelmaLowLevelSafety::updateHook() {
             }
         }
     }
-    else if (CONTROL_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::CONTROL_ENABLED == state_) {
         //
         // write HW commands
         //
@@ -480,6 +503,8 @@ void VelmaLowLevelSafety::updateHook() {
         //
         status_.sc.state_id = static_cast<int32_t >(state_);
         status_.sc.error_code = 0;
+        ++packet_counter_;
+        status_.test = packet_counter_;
         port_status_out_.write(status_);
     }
 }

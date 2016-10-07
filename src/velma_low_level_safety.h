@@ -90,13 +90,15 @@ private:
     bool isNaN(double d) const;
     bool isInLim(double d, double lo_lim, double hi_lim) const;
 
-    enum SafetyControllerState {HW_DOWN, HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
+//    enum SafetyControllerState {HW_DOWN, HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
     static const std::string state_names_[5];
-    const std::string& getStateName(SafetyControllerState state) const;
+//    const std::string& getStateName(SafetyControllerState state) const;
+    const std::string& getStateName(int32_t state) const;
 
     std::string cmdToStr(const VelmaLowLevelCommand &cmd);
 
-    SafetyControllerState state_;
+//    SafetyControllerState state_;
+    int32_t state_;
     int counts_HW_DISABLED_;
 
 /*
@@ -189,6 +191,8 @@ private:
 
     velma_low_level_interface_msgs::VelmaLowLevelStatus status_;
     VelmaLLIStatusInput status_in_;
+
+    uint32_t packet_counter_;
 };
 
 #endif  // VELMA_LOW_LEVEL_SAFETY_H_

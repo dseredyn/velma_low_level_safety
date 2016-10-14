@@ -35,6 +35,7 @@ include_directories(${USE_OROCOS_INCLUDE_DIRS} include)
 ADD_DEFINITIONS(-DEIGEN_RUNTIME_NO_MALLOC)
 ### Orocos Targets ###
 
+#orocos_component(velma_low_level_safety src/safety_checks.cpp src/safety_cmd.cpp src/safety_status)
 orocos_component(velma_low_level_safety src/velma_low_level_safety.cpp src/safety_checks.cpp)
 
 target_link_libraries(velma_low_level_safety

@@ -145,13 +145,21 @@ private:
     std::vector<double> arm_t_limits_;
 
     // port data
+
     VelmaLowLevelCommand cmd_out_;
+    VelmaLLICommandOutput cmd_ports_out_;
+
+    VelmaLowLevelStatus status_in_;
+    VelmaLLIStatusInput status_ports_in_;
+
     VelmaLowLevelCommand cmd_in_;
-
-    VelmaLLICommandOutput out_;
-
     RTT::InputPort<VelmaLowLevelCommand> port_command_in_;
-    RTT::OutputPort<VelmaLowLevelStatus> port_status_out_;
+
+    VelmaLowLevelStatusSC status_sc_out_;
+    RTT::OutputPort<VelmaLowLevelStatusSC> port_status_sc_out_;
+
+    uint32_t status_test_out_;
+    RTT::OutputPort<uint32_t> port_status_test_out_;
 
     // additional HW control ports
     RTT::InputPort<tFriIntfState>       port_rArm_fri_state_in_;
@@ -191,8 +199,6 @@ private:
     bool readCmdData_;
     bool cmdValid_;
 
-    velma_low_level_interface_msgs::VelmaLowLevelStatus status_;
-    VelmaLLIStatusInput status_in_;
 
     uint32_t packet_counter_;
     ros::Time wall_time_prev_;

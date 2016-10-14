@@ -48,6 +48,8 @@
 #include "velma_low_level_interface/velma_lli_command_ports.h"
 #include "velma_low_level_interface/velma_lli_status_ports.h"
 
+#include <sys/time.h>
+
 using namespace velma_low_level_interface_msgs;
 
 class VelmaLowLevelSafety: public RTT::TaskContext {
@@ -193,6 +195,9 @@ private:
     VelmaLLIStatusInput status_in_;
 
     uint32_t packet_counter_;
+    ros::Time wall_time_prev_;
+
+    struct timeval time_prev_;
 };
 
 #endif  // VELMA_LOW_LEVEL_SAFETY_H_

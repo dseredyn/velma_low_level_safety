@@ -35,6 +35,10 @@
 #include "velma_low_level_safety.h"
 #include <math.h>
 
+#include <rtt_rosclock/rtt_rosclock.h>
+
+#include <sys/time.h>
+
 using namespace RTT;
 
 const std::string VelmaLowLevelSafety::state_names_[5] = {"HW_DOWN", "HW_DISABLED", "HW_ENABLED", "CONTROL_ENABLED", "unknown"};
@@ -191,6 +195,9 @@ bool VelmaLowLevelSafety::startHook() {
 
     packet_counter_ = 1;
 
+    wall_time_prev_ = rtt_rosclock::rtt_wall_now();
+    gettimeofday(&time_prev_, NULL);
+
 //    UNRESTRICT_ALLOC;
     return true;
 }
@@ -256,6 +263,19 @@ void VelmaLowLevelSafety::updateHook() {
     Logger::In in("VelmaLowLevelSafety::updateHook");
 //    RESTRICT_ALLOC;
 
+    struct timeval time;
+    gettimeofday(&time, NULL);
+    long sec = time.tv_sec - time_prev_.tv_sec;
+    long usec = time.tv_usec - time_prev_.tv_usec;
+    usec = sec*1000000 + usec;
+    double msec = double(usec) / 1000.0;
+    time_prev_ = time;
+
+    ros::Time wall_time = rtt_rosclock::host_wall_now();
+    Logger::log() << Logger::Debug << (wall_time - wall_time_prev_).toSec() << "   " << msec << Logger::endl;
+    wall_time_prev_ = wall_time;
+//    ros.clock.host_wall_now()
+
     //
     // read HW status
     //
@@ -268,7 +288,7 @@ void VelmaLowLevelSafety::updateHook() {
     bool readCmdData_prev = readCmdData_;
     bool cmdValid_prev = cmdValid_;
 
-    // as FRI components are not synchronized, their communication shatus should
+    // as FRI components are not synchronized, their communication status should
     // be checked in two last cycles
     bool rArm_valid = rArm_valid_prev || status_in_.getPorts().rArm_.valid_;
     bool lArm_valid = lArm_valid_prev || status_in_.getPorts().lArm_.valid_;
@@ -329,22 +349,30 @@ void VelmaLowLevelSafety::updateHook() {
     if (allHwOk_prev != allHwOk_ || allHwOk_prev != allHwOk_ || readCmdData_prev != readCmdData_ ||
         cmdValid_prev != cmdValid_) {
 
-        Logger::log() << Logger::Info << "state: " << getStateName(state_) <<
-            "  allHwOk: " << (allHwOk_?"T":"F") <<
-            "  readCmdData: " << (readCmdData_?"T":"F") <<
-            "  cmdValid: " << (cmdValid_?"T":"F") << Logger::endl;
-        Logger::log() << Logger::Info << "cmd: " << cmdToStr(cmd_in_) << Logger::endl;
+//        if (!readCmdData_) {
+            Logger::log() << Logger::Info << "state: " << getStateName(state_) <<
+                "  allHwOk: " << (allHwOk_?"T":"F") <<
+                "  readCmdData: " << (readCmdData_?"T":"F") <<
+                "  cmdValid: " << (cmdValid_?"T":"F") << Logger::endl;
+//        }
+        if (readCmdData_ && !cmdValid_) {
+            Logger::log() << Logger::Info << "state: " << getStateName(state_) <<
+                "  allHwOk: " << (allHwOk_?"T":"F") <<
+                "  readCmdData: " << (readCmdData_?"T":"F") <<
+                "  cmdValid: " << (cmdValid_?"T":"F") << Logger::endl;
+            Logger::log() << Logger::Info << "cmd: " << cmdToStr(cmd_in_) << Logger::endl;
+        }
     }
 
     if (cmd_in_.sc.valid) {
         if (cmd_in_.sc.cmd == 1) {
-            Logger::log() << Logger::Info << "received cmd: enable_hw" << Logger::endl;
+//            Logger::log() << Logger::Info << "received cmd: enable_hw" << Logger::endl;
         }
         else if (cmd_in_.sc.cmd == 2) {
-            Logger::log() << Logger::Info << "received cmd: enable_control" << Logger::endl;
+//            Logger::log() << Logger::Info << "received cmd: enable_control" << Logger::endl;
         }
         else {
-            Logger::log() << Logger::Info << "received wrong cmd: " << cmd_in_.sc.cmd << Logger::endl;
+//            Logger::log() << Logger::Info << "received wrong cmd: " << cmd_in_.sc.cmd << Logger::endl;
         }
     }
 
@@ -364,7 +392,7 @@ void VelmaLowLevelSafety::updateHook() {
         }
         else if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
             state_ = VelmaLowLevelStatusSC::HW_ENABLED;
-            Logger::log() << Logger::Info << "accepted cmd: enable_hw" << Logger::endl;
+//            Logger::log() << Logger::Info << "accepted cmd: enable_hw" << Logger::endl;
         }
     }
     else if (VelmaLowLevelStatusSC::HW_ENABLED == state_) {
@@ -374,7 +402,7 @@ void VelmaLowLevelSafety::updateHook() {
         else if (cmdValid_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 2) {
             // change state to HW_ENABLED
             state_ = VelmaLowLevelStatusSC::CONTROL_ENABLED;
-            Logger::log() << Logger::Info << "accepted cmd: enable_control" << Logger::endl;
+//            Logger::log() << Logger::Info << "accepted cmd: enable_control" << Logger::endl;
         }
     }
     else if (VelmaLowLevelStatusSC::CONTROL_ENABLED == state_) {

@@ -91,17 +91,6 @@ VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
     addProperty("arm_q_limits_hi", arm_q_limits_hi_);
     addProperty("arm_dq_limits", arm_dq_limits_);
     addProperty("arm_t_limits", arm_t_limits_);
-
-    joint_error_.resize(arm_joints_count_);
-    arm_k_.resize(arm_joints_count_);
-    arm_k_(0) = arm_k_(1) = arm_k_(2) = arm_k_(3) = arm_k_(4) = arm_k_(5) = arm_k_(6) = 20;
-
-    k_.resize(arm_joints_count_);
-    q_.resize(arm_joints_count_, arm_joints_count_);
-    d_.resizeLike(q_);
-    k0_.resizeLike(q_);
-    tmpNN_.resizeLike(q_);
-    es_ = Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd >(arm_joints_count_);
 }
 
 bool VelmaLowLevelSafety::configureHook() {
@@ -206,8 +195,8 @@ bool VelmaLowLevelSafety::startHook() {
 void VelmaLowLevelSafety::stopHook() {
 }
 
-void VelmaLowLevelSafety::calculateArmDampingTorque(const Eigen::VectorXd &joint_velocity,
-    const std::vector<double> &damping_factors, Eigen::VectorXd &joint_torque_command)
+void VelmaLowLevelSafety::calculateArmDampingTorque(const Eigen::Matrix<double,7,1> &joint_velocity,
+    const std::vector<double> &damping_factors, Eigen::Matrix<double,7,1> &joint_torque_command)
 {
     Logger::In in("VelmaLowLevelSafety::calculateArmDampingTorque");
 

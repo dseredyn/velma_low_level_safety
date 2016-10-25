@@ -69,8 +69,8 @@ public:
 private:
     const int arm_joints_count_;
 
-    void calculateArmDampingTorque(const Eigen::VectorXd &joint_velocity,
-        const std::vector<double> &damping_factors, Eigen::VectorXd &joint_torque_command);
+    void calculateArmDampingTorque(const Eigen::Matrix<double,7,1> &joint_velocity,
+        const std::vector<double> &damping_factors, Eigen::Matrix<double,7,1> &joint_torque_command);
 
     void calculateTorsoDampingTorque(double motor_velocity, double &motor_current_command);
 
@@ -179,18 +179,10 @@ private:
     std_msgs::Int32     rArm_KRL_CMD_;             // FRIx.KRL_CMD
     std_msgs::Int32     lArm_KRL_CMD_;             // FRIx.KRL_CMD
 
-    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_dq_;
-    velma_lli_types::PortRawData<Eigen::VectorXd, boost::array<double, 7ul> > arm_t_cmd_;
+    velma_lli_types::PortRawData<Eigen::Matrix<double,7,1>, boost::array<double, 7ul> > arm_dq_;
+    velma_lli_types::PortRawData<Eigen::Matrix<double,7,1>, boost::array<double, 7ul> > arm_t_cmd_;
 
     bool emergency_;
-
-    Eigen::VectorXd joint_error_;
-
-    Eigen::VectorXd arm_k_;
-    Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd > es_;
-    Eigen::VectorXd k_;
-    Eigen::MatrixXd m_, d_, k0_, q_, qt_;
-    Eigen::MatrixXd tmpNN_;
 
     int no_hw_error_counter_;
 

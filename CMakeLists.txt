@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   barrett_hand_controller_msgs
   kuka_lwr_fri
   eigen_conversions
+  controller_common
   kdl_conversions cmake_modules
   )
 
@@ -36,7 +37,12 @@ ADD_DEFINITIONS(-DEIGEN_RUNTIME_NO_MALLOC)
 ### Orocos Targets ###
 
 #orocos_component(velma_low_level_safety src/safety_checks.cpp src/safety_cmd.cpp src/safety_status)
-orocos_component(velma_low_level_safety src/velma_low_level_safety.cpp src/safety_checks.cpp)
+orocos_component(velma_low_level_safety
+    src/velma_low_level_safety.cpp
+    src/safety_checks.cpp
+    src/diagnostic_component.cpp
+    src/common.cpp
+)
 
 target_link_libraries(velma_low_level_safety
     ${catkin_LIBRARIES}

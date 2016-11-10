@@ -39,31 +39,23 @@
 
 #include <sys/time.h>
 
+#include "common.h"
+
 using namespace RTT;
 
-const std::string VelmaLowLevelSafety::state_names_[5] = {"HW_DOWN", "HW_DISABLED", "HW_ENABLED", "CONTROL_ENABLED", "unknown"};
-
-const std::string& VelmaLowLevelSafety::getStateName(int32_t state) const {
-    if (state == VelmaLowLevelStatusSC::HW_DOWN) {
-        return state_names_[0];
+void setFault(VelmaLowLevelStatusSC &status, int type, int faulty_module_id, int faulty_submodule_id) {
+    if ( !status.error ) {
+        status.error = true;
+        status.fault_type = type;
+        status.faulty_module_id = faulty_module_id;
+        status.faulty_submodule_id = faulty_submodule_id;
     }
-    else
-    if (state == VelmaLowLevelStatusSC::HW_DISABLED) {
-        return state_names_[1];
-    }
-    else if (state == VelmaLowLevelStatusSC::HW_ENABLED) {
-        return state_names_[2];
-    }
-    else if (state == VelmaLowLevelStatusSC::CONTROL_ENABLED) {
-        return state_names_[3];
-    }
-    return state_names_[4];
 }
 
 VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
     TaskContext(name, PreOperational),
     arm_joints_count_(7),
-    state_(VelmaLowLevelStatusSC::HW_DOWN),
+    state_(VelmaLowLevelStatusSC::STATE_HW_DOWN),
     cmd_ports_out_(*this),
     status_ports_in_(*this),
     torso_damping_factor_(-1)  // initialize with invalid value, should be later set to >= 0
@@ -81,7 +73,7 @@ VelmaLowLevelSafety::VelmaLowLevelSafety(const std::string &name) :
     this->ports()->addPort("cmd_rArm_cmd_OUTPORT", port_rArm_KRL_CMD_out_);
     this->ports()->addPort("cmd_lArm_cmd_OUTPORT", port_lArm_KRL_CMD_out_);
 
-    this->ports()->addPort("port_robot_status_OUTPORT", port_robot_status_out_);
+//    this->ports()->addPort("port_robot_status_OUTPORT", port_robot_status_out_);
 
     addProperty("l_arm_damping_factors", l_arm_damping_factors_);
     addProperty("r_arm_damping_factors", r_arm_damping_factors_);
@@ -177,7 +169,7 @@ bool VelmaLowLevelSafety::startHook() {
 
     no_hw_error_counter_ = 0;
 
-    state_ = VelmaLowLevelStatusSC::HW_DOWN;
+    state_ = VelmaLowLevelStatusSC::STATE_HW_DOWN;
     allHwOk_ = false;
     hwStatusValid_ = false;
     readCmdData_ = false;
@@ -198,8 +190,6 @@ void VelmaLowLevelSafety::stopHook() {
 void VelmaLowLevelSafety::calculateArmDampingTorque(const Eigen::Matrix<double,7,1> &joint_velocity,
     const std::vector<double> &damping_factors, Eigen::Matrix<double,7,1> &joint_torque_command)
 {
-    Logger::In in("VelmaLowLevelSafety::calculateArmDampingTorque");
-
     joint_torque_command.setZero();
     for (int i = 0; i < arm_joints_count_; ++i) {
         joint_torque_command(i) = -damping_factors[i] * joint_velocity(i);
@@ -208,8 +198,6 @@ void VelmaLowLevelSafety::calculateArmDampingTorque(const Eigen::Matrix<double,7
 
 void VelmaLowLevelSafety::calculateTorsoDampingTorque(double motor_velocity, double &motor_current_command)
 {
-    Logger::In in("VelmaLowLevelSafety::calculateTorsoDampingTorque");
-
     const double torso_gear = 158.0;
     const double torso_trans_mult = 20000.0 * torso_gear / (M_PI * 2.0);
     const double torso_motor_constant = 0.00105;
@@ -250,21 +238,16 @@ std::string VelmaLowLevelSafety::cmdToStr(const VelmaLowLevelCommand &cmd) {
 }
 
 void VelmaLowLevelSafety::updateHook() {
-    Logger::In in("VelmaLowLevelSafety::updateHook");
 //    RESTRICT_ALLOC;
 
-    struct timeval time;
-    gettimeofday(&time, NULL);
-    long sec = time.tv_sec - time_prev_.tv_sec;
-    long usec = time.tv_usec - time_prev_.tv_usec;
-    usec = sec*1000000 + usec;
-    double msec = double(usec) / 1000.0;
-    time_prev_ = time;
+    // reset error status
+    status_sc_out_.error = false;
+    status_sc_out_.fault_type = 0;
+    status_sc_out_.faulty_module_id = 0;
+    status_sc_out_.faulty_submodule_id = 0;
 
-    ros::Time wall_time = rtt_rosclock::host_wall_now();
-    Logger::log() << Logger::Debug << (wall_time - wall_time_prev_).toSec() << "   " << msec << Logger::endl;
-    wall_time_prev_ = wall_time;
-//    ros.clock.host_wall_now()
+    int id_faulty_module;
+    int id_faulty_submodule;
 
     //
     // read HW status
@@ -283,26 +266,114 @@ void VelmaLowLevelSafety::updateHook() {
     bool rArm_valid = rArm_valid_prev || status_ports_in_.getPorts().rArm_.valid_;
     bool lArm_valid = lArm_valid_prev || status_ports_in_.getPorts().lArm_.valid_;
 
+    if (!rArm_valid) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_R_ARM, 0);
+    }
+
+    if (!lArm_valid) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_L_ARM, 0);
+    }
+
     // check FRI and LWR state
     // as FRI components may not be synchronized
     if (port_rArm_fri_state_in_.read(rArm_fri_state_) == RTT::NewData && port_rArm_robot_state_in_.read(rArm_robot_state_) == RTT::NewData) {
-        rArm_valid &= isLwrOk(rArm_fri_state_, rArm_robot_state_);
+        if ( !isLwrOk(rArm_fri_state_, rArm_robot_state_) ) {
+            setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_HW_STATE, VelmaLowLevelStatusSC::MODULE_R_ARM, 0);
+            rArm_valid = false;
+        }
     }
     if (port_lArm_fri_state_in_.read(lArm_fri_state_) == RTT::NewData && port_lArm_robot_state_in_.read(lArm_robot_state_) == RTT::NewData) {
-        lArm_valid &= isLwrOk(lArm_fri_state_, lArm_robot_state_);
+        if ( !isLwrOk(lArm_fri_state_, lArm_robot_state_) ) {
+            setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_HW_STATE, VelmaLowLevelStatusSC::MODULE_L_ARM, 0);
+            lArm_valid = false;
+        }
     }
-    rArm_valid &= isStatusValid(status_in_.rArm);
-    lArm_valid &= isStatusValid(status_in_.lArm);
 
-    bool rHand_valid = status_ports_in_.getPorts().rHand_.valid_ && isStatusValid(status_in_.rHand);
-    bool lHand_valid = status_ports_in_.getPorts().lHand_.valid_ && isStatusValid(status_in_.lHand);
+    if ( !isStatusValid(status_in_.rArm, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_R_ARM, id_faulty_submodule);
+        rArm_valid = false;
+    }
+    if ( !isStatusValid(status_in_.lArm, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_L_ARM, id_faulty_submodule);
+        lArm_valid = false;
+    }
 
-    bool rFt_valid = status_ports_in_.getPorts().rFt_.valid_ && isStatusValid(status_in_.rFt);
-    bool lFt_valid = status_ports_in_.getPorts().lFt_.valid_ && isStatusValid(status_in_.lFt);
+    bool rHand_valid = true;
+    if ( !status_ports_in_.getPorts().rHand_.valid_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_R_HAND, 0);
+        rHand_valid = false;
+    }
 
-    bool tMotor_valid = status_ports_in_.getPorts().tMotor_.valid_ && isStatusValid(status_in_.tMotor);
-    bool hpMotor_valid = status_ports_in_.getPorts().hpMotor_.valid_ && isStatusValid(status_in_.hpMotor);
-    bool htMotor_valid = status_ports_in_.getPorts().htMotor_.valid_ && isStatusValid(status_in_.htMotor);
+    if ( !isStatusValid(status_in_.rHand, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_R_HAND, id_faulty_submodule);
+        rHand_valid = false;
+    }
+
+    bool lHand_valid = true;
+    if ( !status_ports_in_.getPorts().lHand_.valid_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_L_HAND, 0);
+        lHand_valid = false;
+    }
+
+    if ( !isStatusValid(status_in_.lHand, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_L_HAND, id_faulty_submodule);
+        lHand_valid = false;
+    }
+
+    bool rFt_valid = true;
+    if ( !status_ports_in_.getPorts().rFt_.valid_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_R_FT, 0);
+        rFt_valid = false;
+    }
+
+    if ( !isStatusValid(status_in_.rFt, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_R_FT, id_faulty_submodule);
+        rFt_valid = false;
+    }
+
+    bool lFt_valid = true;
+    if ( !status_ports_in_.getPorts().lFt_.valid_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_L_FT, 0);
+        lFt_valid = false;
+    }
+
+    if ( !isStatusValid(status_in_.lFt, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_L_FT, id_faulty_submodule);
+        lFt_valid = false;
+    }
+
+    bool tMotor_valid = true;
+    if ( !status_ports_in_.getPorts().tMotor_.valid_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_T_MOTOR, 0);
+        tMotor_valid = false;
+    }
+
+    if ( !isStatusValid(status_in_.tMotor, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_T_MOTOR, id_faulty_submodule);
+        tMotor_valid = false;
+    }
+
+    bool hpMotor_valid = true;
+    if ( !status_ports_in_.getPorts().hpMotor_.valid_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_HP_MOTOR, 0);
+        hpMotor_valid = false;
+    }
+
+    if ( !isStatusValid(status_in_.hpMotor, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_HP_MOTOR, id_faulty_submodule);
+        hpMotor_valid = false;
+    }
+
+    bool htMotor_valid = true;
+    if ( !status_ports_in_.getPorts().htMotor_.valid_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_HT_MOTOR, 0);
+        htMotor_valid = false;
+    }
+
+    if ( !isStatusValid(status_in_.htMotor, id_faulty_submodule) ) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_HT_MOTOR, id_faulty_submodule);
+        htMotor_valid = false;
+    }
 
     allHwOk_ =  rArm_valid      && lArm_valid &&
                 rHand_valid     && lHand_valid &&
@@ -311,107 +382,86 @@ void VelmaLowLevelSafety::updateHook() {
                 htMotor_valid;
 
     // send diagnostic information about robot state
-    std_msgs::UInt32 robot_state;
-    robot_state.data =  rArm_valid          | (lArm_valid<<1) |
-                        (rHand_valid<<2)    | (lHand_valid<<3) |
-                        (rFt_valid<<4)      | (lFt_valid<<5) |
-                        (tMotor_valid<<6)   | (hpMotor_valid<<7) |
-                        (htMotor_valid<<8);
+//    std_msgs::UInt32 robot_state;
+//    robot_state.data =  rArm_valid          | (lArm_valid<<1) |
+//                        (rHand_valid<<2)    | (lHand_valid<<3) |
+//                        (rFt_valid<<4)      | (lFt_valid<<5) |
+//                        (tMotor_valid<<6)   | (hpMotor_valid<<7) |
+//                        (htMotor_valid<<8);
 
-    port_robot_status_out_.write(robot_state);
+//    port_robot_status_out_.write(robot_state);
 
     //
     // read commands
     //
     readCmdData_ = (port_command_in_.read(cmd_in_) == NewData);
     cmdValid_ = false;
-    if (readCmdData_ && isCommandValid(cmd_in_)) {
+    if (!readCmdData_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_UP, 0, 0);
+    }
+    else if (!isCommandValid(cmd_in_, id_faulty_module, id_faulty_submodule)) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_COMMAND, id_faulty_module, id_faulty_submodule);
+    }
+    else if (VelmaLowLevelStatusSC::STATE_HW_DOWN != state_ && cmd_in_.test != packet_counter_) {
+        setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_PACKET_LOST, 0, 0);
+    }
+    else {
         cmdValid_ = true;
     }
 
-    if (readCmdData_ && cmd_in_.test != packet_counter_ && VelmaLowLevelStatusSC::HW_DOWN != state_) {
-        Logger::log() << Logger::Warning << "received wrong cmd frame: " << cmd_in_.test << " should be " << packet_counter_ << Logger::endl;
-    }
-
+//    if (readCmdData_ && cmd_in_.test != packet_counter_ && VelmaLowLevelStatusSC::STATE_HW_DOWN != state_) {
+//        Logger::In in("VelmaLowLevelSafety::updateHook");
+//        Logger::log() << Logger::Warning << "received wrong cmd frame: " << cmd_in_.test << " should be " << packet_counter_ << Logger::endl;
+//    }
 
     const int32_t prev_state = state_;
-
-    if (allHwOk_prev != allHwOk_ || allHwOk_prev != allHwOk_ || readCmdData_prev != readCmdData_ ||
-        cmdValid_prev != cmdValid_) {
-
-//        if (!readCmdData_) {
-            Logger::log() << Logger::Info << "state: " << getStateName(state_) <<
-                "  allHwOk: " << (allHwOk_?"T":"F") <<
-                "  readCmdData: " << (readCmdData_?"T":"F") <<
-                "  cmdValid: " << (cmdValid_?"T":"F") << Logger::endl;
-//        }
-        if (readCmdData_ && !cmdValid_) {
-            Logger::log() << Logger::Info << "state: " << getStateName(state_) <<
-                "  allHwOk: " << (allHwOk_?"T":"F") <<
-                "  readCmdData: " << (readCmdData_?"T":"F") <<
-                "  cmdValid: " << (cmdValid_?"T":"F") << Logger::endl;
-            Logger::log() << Logger::Info << "cmd: " << cmdToStr(cmd_in_) << Logger::endl;
-        }
-    }
-
-    if (cmd_in_.sc.valid) {
-        if (cmd_in_.sc.cmd == 1) {
-//            Logger::log() << Logger::Info << "received cmd: enable_hw" << Logger::endl;
-        }
-        else if (cmd_in_.sc.cmd == 2) {
-//            Logger::log() << Logger::Info << "received cmd: enable_control" << Logger::endl;
-        }
-        else {
-//            Logger::log() << Logger::Info << "received wrong cmd: " << cmd_in_.sc.cmd << Logger::endl;
-        }
-    }
 
     //
     // manage FSM state transitions
     //
-    if (VelmaLowLevelStatusSC::HW_DOWN == state_) {
+    if (VelmaLowLevelStatusSC::STATE_HW_DOWN == state_) {
         if (allHwOk_) {
-            state_ = VelmaLowLevelStatusSC::HW_DISABLED;
+            state_ = VelmaLowLevelStatusSC::STATE_HW_DISABLED;
         }
     }
-    else if (VelmaLowLevelStatusSC::HW_DISABLED == state_) {
+    else if (VelmaLowLevelStatusSC::STATE_HW_DISABLED == state_) {
         // state changes
         if (!allHwOk_) {
             // one or more HW components are down
-            state_ = VelmaLowLevelStatusSC::HW_DOWN;
+            state_ = VelmaLowLevelStatusSC::STATE_HW_DOWN;
         }
         else if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
-            state_ = VelmaLowLevelStatusSC::HW_ENABLED;
+            state_ = VelmaLowLevelStatusSC::STATE_HW_ENABLED;
 //            Logger::log() << Logger::Info << "accepted cmd: enable_hw" << Logger::endl;
         }
     }
-    else if (VelmaLowLevelStatusSC::HW_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::STATE_HW_ENABLED == state_) {
         if (!allHwOk_) {
-            state_ = VelmaLowLevelStatusSC::HW_DOWN;
+            state_ = VelmaLowLevelStatusSC::STATE_HW_DOWN;
         }
         else if (cmdValid_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 2) {
-            // change state to HW_ENABLED
-            state_ = VelmaLowLevelStatusSC::CONTROL_ENABLED;
+            // change state to STATE_HW_ENABLED
+            state_ = VelmaLowLevelStatusSC::STATE_CONTROL_ENABLED;
 //            Logger::log() << Logger::Info << "accepted cmd: enable_control" << Logger::endl;
         }
     }
-    else if (VelmaLowLevelStatusSC::CONTROL_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::STATE_CONTROL_ENABLED == state_) {
         if (!allHwOk_) {
-            state_ = VelmaLowLevelStatusSC::HW_DOWN;
+            state_ = VelmaLowLevelStatusSC::STATE_HW_DOWN;
         }
         else if (!cmdValid_) {
-            state_ = VelmaLowLevelStatusSC::HW_ENABLED;
+            state_ = VelmaLowLevelStatusSC::STATE_HW_ENABLED;
         }
     }
 
     if (prev_state != state_) {
-        Logger::log() << Logger::Info << "state change: " << getStateName(prev_state) << " -> " << getStateName(state_) << Logger::endl;
+//        Logger::log() << Logger::Info << "state change: " << getStateName(prev_state) << " -> " << getStateName(state_) << Logger::endl;
     }
 
     //
     // execute states behaviours
     //
-    if (VelmaLowLevelStatusSC::HW_DOWN == state_) {
+    if (VelmaLowLevelStatusSC::STATE_HW_DOWN == state_) {
         //
         // write HW commands to available devices
         //
@@ -457,7 +507,7 @@ void VelmaLowLevelSafety::updateHook() {
             cmd_ports_out_.getPorts().htMotor_.writePorts();
         }
     }
-    else if (VelmaLowLevelStatusSC::HW_DISABLED == state_ || VelmaLowLevelStatusSC::HW_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::STATE_HW_DISABLED == state_ || VelmaLowLevelStatusSC::STATE_HW_ENABLED == state_) {
         arm_dq_.convertFromROS(status_in_.rArm.dq);
         calculateArmDampingTorque(arm_dq_.data_, r_arm_damping_factors_, arm_t_cmd_.data_);
         arm_t_cmd_.convertToROS(cmd_out_.rArm.t);
@@ -490,14 +540,15 @@ void VelmaLowLevelSafety::updateHook() {
         // write status
         //
         status_sc_out_.state_id = static_cast<int32_t >(state_);
-        status_sc_out_.error_code = 0;
+//TODO
+//        status_sc_out_.error_code = 0;
         port_status_sc_out_.write(status_sc_out_);
 
         ++packet_counter_;
         status_test_out_ = packet_counter_;
         port_status_test_out_.write(status_test_out_);
 
-        if (VelmaLowLevelStatusSC::HW_ENABLED == state_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
+        if (VelmaLowLevelStatusSC::STATE_HW_ENABLED == state_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
             //
             // write FRI commands
             //
@@ -512,7 +563,7 @@ void VelmaLowLevelSafety::updateHook() {
             }
         }
     }
-    else if (VelmaLowLevelStatusSC::CONTROL_ENABLED == state_) {
+    else if (VelmaLowLevelStatusSC::STATE_CONTROL_ENABLED == state_) {
         //
         // write HW commands
         //
@@ -522,13 +573,15 @@ void VelmaLowLevelSafety::updateHook() {
         // write status
         //
         status_sc_out_.state_id = static_cast<int32_t >(state_);
-        status_sc_out_.error_code = 0;
+//TODO
+//        status_sc_out_.error_code = 0;
         port_status_sc_out_.write(status_sc_out_);
 
         ++packet_counter_;
         status_test_out_ = packet_counter_;
         port_status_test_out_.write(status_test_out_);
     }
+//    UNRESTRICT_ALLOC;
 }
 
 ORO_LIST_COMPONENT_TYPE(VelmaLowLevelSafety)

@@ -45,50 +45,91 @@ bool VelmaLowLevelSafety::isInLim(double d, double lo_lim, double hi_lim) const 
     return d == d && d > lo_lim && d < hi_lim;
 }
 
-bool VelmaLowLevelSafety::isCommandValidTorso(const VelmaLowLevelCommandMotor &cmd) const {
+bool VelmaLowLevelSafety::isCommandValidTorso(const VelmaLowLevelCommandMotor &cmd, int& idx) const {
 // TODO
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isCommandValidHeadPan(const VelmaLowLevelCommandMotor &cmd) const {
+bool VelmaLowLevelSafety::isCommandValidHeadPan(const VelmaLowLevelCommandMotor &cmd, int& idx) const {
 // TODO
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isCommandValidHeadTilt(const VelmaLowLevelCommandMotor &cmd) const {
+bool VelmaLowLevelSafety::isCommandValidHeadTilt(const VelmaLowLevelCommandMotor &cmd, int& idx) const {
 // TODO
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommandArm &cmd) const {
+bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommandArm &cmd, int& idx) const {
     for (int i = 0; i < arm_joints_count_; ++i) {
         if (!isInLim(cmd.t[i], -arm_t_limits_[i], arm_t_limits_[i]))
         {
+            idx = i+1;
             return false;
         }
     }
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommandHand &cmd) const {
+bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommandHand &cmd, int& idx) const {
 // TODO
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommand &cmd) const {
-    return isCommandValid(cmd.lArm) && isCommandValid(cmd.rArm) &&
-        isCommandValid(cmd.lHand) && isCommandValid(cmd.rHand) &&
-        isCommandValidTorso(cmd.tMotor) && isCommandValidHeadPan(cmd.hpMotor) &&
-        isCommandValidHeadTilt(cmd.htMotor);
+bool VelmaLowLevelSafety::isCommandValid(const VelmaLowLevelCommand &cmd, int& module, int& submodule) const {
+    if ( !isCommandValid(cmd.lArm, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_L_ARM;
+        return false;
+    }
+
+    if ( !isCommandValid(cmd.rArm, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_R_ARM;
+        return false;
+    }
+
+    if ( !isCommandValid(cmd.lHand, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_L_HAND;
+        return false;
+    }
+
+    if ( !isCommandValid(cmd.rHand, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_R_HAND;
+        return false;
+    }
+
+    if ( !isCommandValidTorso(cmd.tMotor, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_T_MOTOR;
+        return false;
+    }
+
+    if ( !isCommandValidHeadPan(cmd.hpMotor, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_HP_MOTOR;
+        return false;
+    }
+
+    if ( !isCommandValidHeadTilt(cmd.htMotor, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_HT_MOTOR;
+        return false;
+    }
+
+    module = -1;
+
+    return true;
 }
 
-bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusArm &st) const {
+bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusArm &st, int& idx) const {
     for (int i = 0; i < arm_joints_count_; ++i) {
         if (!isInLim(st.q[i], arm_q_limits_lo_[i], arm_q_limits_hi_[i]) ||
             isNaN(st.dq[i]) ||
             isNaN(st.t[i]) ||
             isNaN(st.gt[i]))
         {
+            idx = i+1;
             return false;
         }
     }
@@ -97,32 +138,81 @@ bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusArm &st) const 
 //    isInLim(st.w.force.x, 
 //    st.mmx
 
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusHand &st) const {
+bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusHand &st, int& idx) const {
     // TODO
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusMotor &st) const {
+bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusMotor &st, int& idx) const {
     // TODO
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusFT &st) const {
+bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatusFT &st, int& idx) const {
     // TODO
+    idx = 0;
     return true;
 }
 
-bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatus &st) const {
+bool VelmaLowLevelSafety::isStatusValid(const VelmaLowLevelStatus &st, int& module, int& submodule) const {
 // TODO:
 // barrett_hand_controller_msgs/BHPressureState rHand_p
 // geometry_msgs/WrenchStamped[3] lHand_f
 
-    return isStatusValid(st.lArm) && isStatusValid(st.rArm) && isStatusValid(st.lHand) && isStatusValid(st.rHand) &&
-        isStatusValid(st.lFt) && isStatusValid(st.rFt) && isStatusValid(st.tMotor) && isStatusValid(st.hpMotor) &&
-        isStatusValid(st.htMotor);
+    if ( !isStatusValid(st.lArm, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_L_ARM;
+        return false;
+    }
+
+    if ( !isStatusValid(st.rArm, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_R_ARM;
+        return false;
+    }
+
+    if ( !isStatusValid(st.lHand, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_L_HAND;
+        return false;
+    }
+
+    if ( !isStatusValid(st.rHand, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_R_HAND;
+        return false;
+    }
+
+    if ( !isStatusValid(st.lFt, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_L_FT;
+        return false;
+    }
+
+    if ( !isStatusValid(st.rFt, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_R_FT;
+        return false;
+    }
+
+    if ( !isStatusValid(st.tMotor, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_T_MOTOR;
+        return false;
+    }
+
+    if ( !isStatusValid(st.hpMotor, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_HP_MOTOR;
+        return false;
+    }
+
+    if ( !isStatusValid(st.htMotor, submodule) ) {
+        module = VelmaLowLevelStatusSC::MODULE_HT_MOTOR;
+        return false;
+    }
+
+    module = 0;
+
+    return true;
 }
 
 bool VelmaLowLevelSafety::isLwrOk(const tFriIntfState &fri_state, const tFriRobotState &robot_state) const {

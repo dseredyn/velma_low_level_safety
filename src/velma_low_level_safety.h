@@ -74,18 +74,18 @@ private:
 
     void calculateTorsoDampingTorque(double motor_velocity, double &motor_current_command);
 
-    bool isCommandValidTorso(const VelmaLowLevelCommandMotor &cmd) const;
-    bool isCommandValidHeadPan(const VelmaLowLevelCommandMotor &cmd) const;
-    bool isCommandValidHeadTilt(const VelmaLowLevelCommandMotor &cmd) const;
-    bool isCommandValid(const VelmaLowLevelCommandArm &cmd) const;
-    bool isCommandValid(const VelmaLowLevelCommandHand &cmd) const;
-    bool isCommandValid(const VelmaLowLevelCommand &cmd) const;
+    bool isCommandValidTorso(const VelmaLowLevelCommandMotor &cmd, int& idx) const;
+    bool isCommandValidHeadPan(const VelmaLowLevelCommandMotor &cmd, int& idx) const;
+    bool isCommandValidHeadTilt(const VelmaLowLevelCommandMotor &cmd, int& idx) const;
+    bool isCommandValid(const VelmaLowLevelCommandArm &cmd, int& idx) const;
+    bool isCommandValid(const VelmaLowLevelCommandHand &cmd, int& idx) const;
+    bool isCommandValid(const VelmaLowLevelCommand &cmd, int& module, int& submodule) const;
 
-    bool isStatusValid(const VelmaLowLevelStatus &st) const;
-    bool isStatusValid(const VelmaLowLevelStatusArm &st) const;
-    bool isStatusValid(const VelmaLowLevelStatusHand &st) const;
-    bool isStatusValid(const VelmaLowLevelStatusMotor &st) const;
-    bool isStatusValid(const VelmaLowLevelStatusFT &st) const;
+    bool isStatusValid(const VelmaLowLevelStatus &st, int& module, int& submodule) const;
+    bool isStatusValid(const VelmaLowLevelStatusArm &st, int& idx) const;
+    bool isStatusValid(const VelmaLowLevelStatusHand &st, int& idx) const;
+    bool isStatusValid(const VelmaLowLevelStatusMotor &st, int& idx) const;
+    bool isStatusValid(const VelmaLowLevelStatusFT &st, int& idx) const;
 
     bool isLwrOk(const tFriIntfState &fri_state, const tFriRobotState &robot_state) const;
 
@@ -94,8 +94,6 @@ private:
 
 //    enum SafetyControllerState {HW_DOWN, HW_DISABLED, HW_ENABLED, CONTROL_ENABLED};
     static const std::string state_names_[5];
-//    const std::string& getStateName(SafetyControllerState state) const;
-    const std::string& getStateName(int32_t state) const;
 
     std::string cmdToStr(const VelmaLowLevelCommand &cmd);
 
@@ -170,7 +168,7 @@ private:
     RTT::OutputPort<std_msgs::Int32 >   port_lArm_KRL_CMD_out_;             // FRIx.KRL_CMD
 
     // additional status port
-    RTT::OutputPort<std_msgs::UInt32 >   port_robot_status_out_;
+//    RTT::OutputPort<std_msgs::UInt32 >   port_robot_status_out_;
 
     tFriIntfState       rArm_fri_state_;
     tFriRobotState      rArm_robot_state_;
@@ -179,8 +177,8 @@ private:
     std_msgs::Int32     rArm_KRL_CMD_;             // FRIx.KRL_CMD
     std_msgs::Int32     lArm_KRL_CMD_;             // FRIx.KRL_CMD
 
-    velma_lli_types::PortRawData<Eigen::Matrix<double,7,1>, boost::array<double, 7ul> > arm_dq_;
-    velma_lli_types::PortRawData<Eigen::Matrix<double,7,1>, boost::array<double, 7ul> > arm_t_cmd_;
+    interface_ports::PortRawData<Eigen::Matrix<double,7,1>, boost::array<double, 7ul> > arm_dq_;
+    interface_ports::PortRawData<Eigen::Matrix<double,7,1>, boost::array<double, 7ul> > arm_t_cmd_;
 
     bool emergency_;
 

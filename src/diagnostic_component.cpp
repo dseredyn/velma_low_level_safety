@@ -168,7 +168,7 @@ void DiagnosticComponent::stopHook() {
 void DiagnosticComponent::updateHook() {
     port_status_sc_in_.read(status_sc_in_);
 
-    bool changed = false;
+    bool changed = true;//false;
 
     // states of components
     for (int i = 0; i < peers_.size(); ++i) {

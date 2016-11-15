@@ -252,8 +252,10 @@ void VelmaLowLevelSafety::updateHook() {
     //
     // read HW status
     //
-    bool rArm_valid_prev = status_ports_in_.getPorts().rArm_.valid_;
-    bool lArm_valid_prev = status_ports_in_.getPorts().lArm_.valid_;
+    // TODO
+    status_ports_in_.isValid("rArm");
+    bool rArm_valid_prev = true;//status_ports_in_.getPorts().rArm_.valid_;
+    bool lArm_valid_prev = true;//status_ports_in_.getPorts().lArm_.valid_;
 
     status_ports_in_.readPorts(status_in_);
 
@@ -263,8 +265,9 @@ void VelmaLowLevelSafety::updateHook() {
 
     // as FRI components are not synchronized, their communication status should
     // be checked in two last cycles
-    bool rArm_valid = rArm_valid_prev || status_ports_in_.getPorts().rArm_.valid_;
-    bool lArm_valid = lArm_valid_prev || status_ports_in_.getPorts().lArm_.valid_;
+    // TODO
+    bool rArm_valid = true;//rArm_valid_prev || status_ports_in_.getPorts().rArm_.valid_;
+    bool lArm_valid = true;//lArm_valid_prev || status_ports_in_.getPorts().lArm_.valid_;
 
     if (!rArm_valid) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_R_ARM, 0);
@@ -299,6 +302,14 @@ void VelmaLowLevelSafety::updateHook() {
     }
 
     bool rHand_valid = true;
+    bool lHand_valid = true;
+    bool rFt_valid = true;
+    bool lFt_valid = true;
+    bool tMotor_valid = true;
+    bool hpMotor_valid = true;
+    bool htMotor_valid = true;
+// TODO
+/*
     if ( !status_ports_in_.getPorts().rHand_.valid_) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_R_HAND, 0);
         rHand_valid = false;
@@ -309,7 +320,6 @@ void VelmaLowLevelSafety::updateHook() {
         rHand_valid = false;
     }
 
-    bool lHand_valid = true;
     if ( !status_ports_in_.getPorts().lHand_.valid_) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_L_HAND, 0);
         lHand_valid = false;
@@ -320,7 +330,6 @@ void VelmaLowLevelSafety::updateHook() {
         lHand_valid = false;
     }
 
-    bool rFt_valid = true;
     if ( !status_ports_in_.getPorts().rFt_.valid_) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_R_FT, 0);
         rFt_valid = false;
@@ -331,7 +340,6 @@ void VelmaLowLevelSafety::updateHook() {
         rFt_valid = false;
     }
 
-    bool lFt_valid = true;
     if ( !status_ports_in_.getPorts().lFt_.valid_) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_L_FT, 0);
         lFt_valid = false;
@@ -342,7 +350,7 @@ void VelmaLowLevelSafety::updateHook() {
         lFt_valid = false;
     }
 
-    bool tMotor_valid = true;
+
     if ( !status_ports_in_.getPorts().tMotor_.valid_) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_T_MOTOR, 0);
         tMotor_valid = false;
@@ -353,7 +361,6 @@ void VelmaLowLevelSafety::updateHook() {
         tMotor_valid = false;
     }
 
-    bool hpMotor_valid = true;
     if ( !status_ports_in_.getPorts().hpMotor_.valid_) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_HP_MOTOR, 0);
         hpMotor_valid = false;
@@ -364,7 +371,6 @@ void VelmaLowLevelSafety::updateHook() {
         hpMotor_valid = false;
     }
 
-    bool htMotor_valid = true;
     if ( !status_ports_in_.getPorts().htMotor_.valid_) {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_COMM_HW, VelmaLowLevelStatusSC::MODULE_HT_MOTOR, 0);
         htMotor_valid = false;
@@ -374,7 +380,7 @@ void VelmaLowLevelSafety::updateHook() {
         setFault(status_sc_out_, VelmaLowLevelStatusSC::FAULT_NAN_STATUS, VelmaLowLevelStatusSC::MODULE_HT_MOTOR, id_faulty_submodule);
         htMotor_valid = false;
     }
-
+*/
     allHwOk_ =  rArm_valid      && lArm_valid &&
                 rHand_valid     && lHand_valid &&
                 rFt_valid       && lFt_valid &&
@@ -432,7 +438,7 @@ void VelmaLowLevelSafety::updateHook() {
         }
         else if (cmd_in_.sc.valid && cmd_in_.sc.cmd == 1) {
             state_ = VelmaLowLevelStatusSC::STATE_HW_ENABLED;
-//            Logger::log() << Logger::Info << "accepted cmd: enable_hw" << Logger::endl;
+            //Logger::log() << Logger::Info << "accepted cmd: enable_hw" << Logger::endl;
         }
     }
     else if (VelmaLowLevelStatusSC::STATE_HW_ENABLED == state_) {
@@ -442,7 +448,7 @@ void VelmaLowLevelSafety::updateHook() {
         else if (cmdValid_ && cmd_in_.sc.valid && cmd_in_.sc.cmd == 2) {
             // change state to STATE_HW_ENABLED
             state_ = VelmaLowLevelStatusSC::STATE_CONTROL_ENABLED;
-//            Logger::log() << Logger::Info << "accepted cmd: enable_control" << Logger::endl;
+            //Logger::log() << Logger::Info << "accepted cmd: enable_control" << Logger::endl;
         }
     }
     else if (VelmaLowLevelStatusSC::STATE_CONTROL_ENABLED == state_) {
@@ -466,6 +472,8 @@ void VelmaLowLevelSafety::updateHook() {
         // write HW commands to available devices
         //
 
+// TODO
+/*
         // generate safe outputs for all operational devices
         if (rArm_valid) {
             arm_dq_.convertFromROS(status_in_.rArm.dq);
@@ -506,6 +514,7 @@ void VelmaLowLevelSafety::updateHook() {
             cmd_ports_out_.getPorts().htMotor_.convertFromROS(cmd_out_.htMotor);
             cmd_ports_out_.getPorts().htMotor_.writePorts();
         }
+*/
     }
     else if (VelmaLowLevelStatusSC::STATE_HW_DISABLED == state_ || VelmaLowLevelStatusSC::STATE_HW_ENABLED == state_) {
         arm_dq_.convertFromROS(status_in_.rArm.dq);

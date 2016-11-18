@@ -20,6 +20,7 @@
   <build_depend>barrett_hand_controller_msgs</build_depend>
   <build_depend>kuka_lwr_fri</build_depend>
   <build_depend>common_interfaces</build_depend>
+  <build_depend>common_behavior</build_depend>
 
   <run_depend>rtt</run_depend>
   <run_depend>ocl</run_depend>
@@ -27,6 +28,7 @@
   <run_depend>diagnostic_msgs</run_depend>
   <run_depend>velma_low_level_interface</run_depend>
   <run_depend>common_interfaces</run_depend>
+  <run_depend>velma_low_level_behaviors</run_depend>
 
   <!-- ROS Msg Typekits and Srv Proxies -->
   <build_depend>rtt_sensor_msgs</build_depend>

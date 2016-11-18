@@ -1,0 +1,96 @@
+/*
+ Copyright (c) 2014, Robot Control and Pattern Recognition Group, Warsaw University of Technology
+ All rights reserved.
+ 
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+     * Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+     * Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in the
+       documentation and/or other materials provided with the distribution.
+     * Neither the name of the Warsaw University of Technology nor the
+       names of its contributors may be used to endorse or promote products
+       derived from this software without specific prior written permission.
+ 
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED. IN NO EVENT SHALL <COPYright HOLDER> BE LIABLE FOR ANY
+ DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#include <vector>
+#include <string>
+
+#include "rtt/RTT.hpp"
+#include <rtt/Component.hpp>
+#include <rtt/Logger.hpp>
+
+#include "velma_low_level_interface_msgs/VelmaLowLevelCommand.h"
+#include "velma_low_level_interface/velma_lli_command_ports.h"
+
+using namespace velma_low_level_interface_msgs;
+using namespace RTT;
+
+class VelmaLowIdleComponent: public RTT::TaskContext {
+public:
+    explicit VelmaLowIdleComponent(const std::string &name);
+
+    bool configureHook();
+
+    bool startHook();
+
+    void stopHook();
+
+    void updateHook();
+
+private:
+
+    VelmaLowLevelCommand cmd_;
+    RTT::InputPort<VelmaLowLevelCommand > port_cmd_in_;
+
+    velma_lli_types::VelmaCommand_Ports<RTT::OutputPort > cmd_ports_out_;
+};
+
+VelmaLowIdleComponent::VelmaLowIdleComponent(const std::string &name) :
+    TaskContext(name, PreOperational),
+    port_cmd_in_("cmd_INPORT"),
+    cmd_ports_out_(*this)
+{
+    this->ports()->addPort(port_cmd_in_);
+}
+
+bool VelmaLowIdleComponent::configureHook() {
+    Logger::In in("VelmaLowIdleComponent::configureHook");
+    return true;
+}
+
+bool VelmaLowIdleComponent::startHook() {
+    return true;
+}
+
+void VelmaLowIdleComponent::stopHook() {
+}
+
+void VelmaLowIdleComponent::updateHook() {
+    if (port_cmd_in_.read(cmd_) != RTT::NewData) {
+        Logger::In in("VelmaLowIdleComponent::updateHook");
+        Logger::log() << Logger::Error << "could not read data on port "
+            << port_cmd_in_.getName() << Logger::endl;
+        error();
+        return;
+    }
+
+    cmd_ports_out_.convertFromROS(cmd_);
+    cmd_ports_out_.setValid(true);
+    cmd_ports_out_.writePorts();
+}
+
+ORO_LIST_COMPONENT_TYPE(VelmaLowIdleComponent)
+

@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   eigen_conversions
   kdl_conversions cmake_modules
   common_interfaces
+  common_behavior
   )
 
 find_package(OROCOS-RTT REQUIRED COMPONENTS rtt-scripting rtt-transport-corba)
@@ -42,6 +43,9 @@ orocos_component(velma_low_level_safety
     src/safety_checks.cpp
     src/diagnostic_component.cpp
     src/common.cpp
+    src/velma_low_level_master.cpp
+    src/idle_component.cpp
+    src/safe_component.cpp
 )
 
 target_link_libraries(velma_low_level_safety
@@ -55,7 +59,7 @@ target_link_libraries(velma_low_level_safety
 # Export package information (replaces catkin_package() macro) 
 orocos_generate_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS rtt_ros geometry_msgs std_msgs message_runtime rtt_roscomm velma_low_level_interface velma_low_level_interface_msgs common_interfaces
+  CATKIN_DEPENDS rtt_ros geometry_msgs std_msgs message_runtime rtt_roscomm velma_low_level_interface velma_low_level_interface_msgs common_interfaces common_behavior
 )
 
 #orocos_install_headers(

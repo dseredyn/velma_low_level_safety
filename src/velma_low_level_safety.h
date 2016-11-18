@@ -145,10 +145,10 @@ private:
     // port data
 
     VelmaLowLevelCommand cmd_out_;
-    VelmaLLICommandOutput cmd_ports_out_;
+    velma_lli_types::VelmaCommand_Ports<RTT::OutputPort > cmd_ports_out_;
 
     VelmaLowLevelStatus status_in_;
-    VelmaLLIStatusInput status_ports_in_;
+    velma_lli_types::VelmaStatus_Ports<RTT::InputPort > status_ports_in_;
 
     VelmaLowLevelCommand cmd_in_;
     RTT::InputPort<VelmaLowLevelCommand> port_command_in_;
